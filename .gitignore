@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 output/human-item_dryrun_*.json
 output/human-item_dryrun_*.audit.jsonl
+output/virtual-clothing_dryrun_*.json
+output/virtual-clothing_dryrun_*.audit.jsonl

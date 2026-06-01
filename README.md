@@ -51,3 +51,28 @@ python human_item_pairing.py \
 - `output/human-item_<batch_id>.json`
 - `output/human-item_<batch_id>.audit.jsonl`
 
+## Virtual Clothing
+
+`virtual_clothing_pairing.py` is a separate script for virtual clothing pairing. It uses the same batch controls as the human-item script, but judges whether a reference garment can replace visible clothing on the person.
+
+```bash
+python virtual_clothing_pairing.py \
+  --gen-dir sample/virtual-clothing/gen \
+  --gen-metadata-dir sample/virtual-clothing/gen_metadata \
+  --ref-dir sample/virtual-clothing/ref \
+  --ref-metadata-dir sample/virtual-clothing/ref_metadata \
+  --output-dir output \
+  --target-count 100 \
+  --batch-id exp_v1 \
+  --seed 20260601 \
+  --max-ref-attempts-per-gen 5 \
+  --score-threshold 0.75 \
+  --base-url http://10.154.39.57:8001/v1 \
+  --api-key 123456 \
+  --model-name gemma-4-31B-it
+```
+
+Outputs:
+
+- `output/virtual-clothing_<batch_id>.json`
+- `output/virtual-clothing_<batch_id>.audit.jsonl`
