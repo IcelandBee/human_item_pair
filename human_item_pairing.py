@@ -37,7 +37,20 @@ You will receive:
 
 Decide whether the person in image 1 can naturally interact with the main object in image 2 using their hand or hands.
 
-Be conservative. Reject the pair if the interaction would require major pose changes, impossible hand placement, severe occlusion, unrealistic object scale, unclear contact, or an unclear hand-object action.
+Use a moderately flexible suitability standard. The edit may make minor hand, wrist, or forearm adjustments when the person's overall body pose, framing, clothing, face, and scene can remain essentially unchanged.
+
+Accept these cases when they are visually plausible:
+- A seated person with hands near the lap may hold, support, or rest a small or medium object on the lap or in both hands.
+- A person in a dynamic pose may hold, wave, carry, or grip a small or lightweight object if the current arm direction already makes the interaction plausible.
+- A hand that is partially out of frame or partly occluded may still be usable if the visible arm direction clearly supports where the object would go.
+- Objects such as paper, flowers, books, small bags, small pillows, mugs, bottles, small tools, and other lightweight carryable items can be accepted with simple hand or arm adjustment.
+
+Hard reject these cases:
+- The image is a close-up headshot or pure upper-body crop with no usable hand or arm evidence.
+- The interaction would require generating complete new arms or hands.
+- The object is large, heavy, awkward, fixed to a wall or structure, or requires a special body posture, such as ladders, large instruments, wall reliefs, big furniture, or automotive parts.
+- The person is lying down or in a constrained pose where the object would not have a physically coherent support point.
+- The edit would require major pose changes, severe occlusion, unrealistic object scale, unclear contact, or an unclear hand-object action.
 
 If suitable, generate exactly one prompt in this format:
 Let the person in image 1 [hand-object action phrase] [object description] shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged.

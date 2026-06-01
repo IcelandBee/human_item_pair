@@ -4,6 +4,7 @@ from pathlib import Path
 
 from human_item_pairing import (
     ImageItem,
+    PAIRING_SYSTEM_PROMPT,
     PairingConfig,
     build_output_paths,
     build_size_buckets,
@@ -487,3 +488,16 @@ def test_format_summary_is_short_and_includes_paths():
     assert "accepted=96" in summary
     assert "output=output\\human-item_exp_v1.json" in summary or "output=output/human-item_exp_v1.json" in summary
     assert "audit=output\\human-item_exp_v1.audit.jsonl" in summary or "audit=output/human-item_exp_v1.audit.jsonl" in summary
+
+
+def test_pairing_prompt_uses_moderately_relaxed_suitability_rules():
+    prompt = PAIRING_SYSTEM_PROMPT.lower()
+
+    assert "moderately flexible" in prompt
+    assert "minor hand, wrist, or forearm adjustments" in prompt
+    assert "seated" in prompt and "lap" in prompt
+    assert "dynamic pose" in prompt and "small or lightweight" in prompt
+    assert "partially out of frame" in prompt
+    assert "hard reject" in prompt
+    assert "close-up headshot" in prompt
+    assert "large, heavy, awkward" in prompt
