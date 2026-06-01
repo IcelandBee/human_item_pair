@@ -1,0 +1,81 @@
+{
+  "file_name": "000000.jpg",
+  "image_path": "/mnt/DATA_71/public/data/data_pool/human-item/ref/000000.jpg",
+  "metadata_path": "/mnt/DATA_71/public/data/data_pool/human-item/ref_metadata/000000.json",
+  "original_file_name": "00000000_8936.jpg",
+  "original_stem": "00000000_8936",
+  "original_image_path": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data/物件类-2.1普通场景下的物体_2w_preprocessed-20260528-162925/00000000_8936.jpg",
+  "original_width": 944,
+  "original_height": 1104,
+  "resized_width": 944,
+  "resized_height": 1104,
+  "resize_mode": "crop",
+  "preferred_resolution": [
+    944,
+    1104
+  ],
+  "object_name": "glass jar",
+  "object_category": "container",
+  "object_description": "A large, clear glass jar filled with a variety of snack mix including pretzels and crackers, with an orange plastic scoop inside.",
+  "coarse_position": {
+    "horizontal": "center",
+    "vertical": "center"
+  },
+  "bbox_norm": {
+    "x_min": 0.12,
+    "y_min": 0.09,
+    "x_max": 0.7,
+    "y_max": 0.91
+  },
+  "holdability": "carryable",
+  "suitable_for_holding": true,
+  "should_use": true,
+  "confidence": "high",
+  "reason": "The glass jar is the most dominant, singular, and holdable object in the image.",
+  "migration_date": "2026-05-30 11:08:59",
+  "migration_date_compact": "20260530-110859",
+  "migration_source": {
+    "src_image_dir": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data/物件类-2.1普通场景下的物体_2w_preprocessed-20260528-162925",
+    "src_label_dir": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data_label/物件类-2.1普通场景下的物体_2w_preprocessed-20260528-162925-20260529-025037/annotations",
+    "meta_input_image": "00000000_8936.jpg",
+    "meta_operator": "object_holdable_labeler"
+  },
+  "filter_rules": {
+    "annotation.should_use": true,
+    "annotation.suitable_for_holding": true,
+    "annotation.holdability": [
+      "handle",
+      "carryable",
+      "pet_holdable"
+    ],
+    "annotation.confidence": [
+      "high"
+    ]
+  },
+  "original_annotation": {
+    "meta": {
+      "operator": "object_holdable_labeler",
+      "input_image": "00000000_8936.jpg"
+    },
+    "annotation": {
+      "object_name": "glass jar",
+      "object_category": "container",
+      "object_description": "A large, clear glass jar filled with a variety of snack mix including pretzels and crackers, with an orange plastic scoop inside.",
+      "coarse_position": {
+        "horizontal": "center",
+        "vertical": "center"
+      },
+      "bbox_norm": {
+        "x_min": 0.12,
+        "y_min": 0.09,
+        "x_max": 0.7,
+        "y_max": 0.91
+      },
+      "holdability": "carryable",
+      "suitable_for_holding": true,
+      "should_use": true,
+      "confidence": "high",
+      "reason": "The glass jar is the most dominant, singular, and holdable object in the image."
+    }
+  }
+}

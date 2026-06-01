@@ -1,0 +1,77 @@
+{
+  "file_name": "000000.jpg",
+  "image_path": "/mnt/DATA_71/public/data/data_pool/human-item/gen/000000.jpg",
+  "metadata_path": "/mnt/DATA_71/public/data/data_pool/human-item/gen_metadata/000000.json",
+  "original_file_name": "00000017_1683.jpg",
+  "original_stem": "00000017_1683",
+  "original_image_path": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data/人物类-1.1普通人物图_2w_preprocessed-20260528-120014/00000017_1683.jpg",
+  "original_width": 1248,
+  "original_height": 832,
+  "resized_width": 1248,
+  "resized_height": 832,
+  "resize_mode": "crop",
+  "preferred_resolution": [
+    1248,
+    832
+  ],
+  "migration_date": "2026-05-29 16:53:39",
+  "migration_date_compact": "20260529-165339",
+  "migration_source": {
+    "src_image_dir": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data/人物类-1.1普通人物图_2w_preprocessed-20260528-120014",
+    "src_label_dir": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data_label/人物类-1.1普通人物图_2w_preprocessed_annotation"
+  },
+  "filter_rules": {
+    "annotation.person_count": [
+      "1"
+    ],
+    "annotation.head_visible": [
+      "yes"
+    ],
+    "annotation.shot_type": [
+      "half_body",
+      "full_body",
+      "near_full_body"
+    ],
+    "annotation.hand_hold_feasible": [
+      "yes"
+    ],
+    "annotation.clothes_visible": [
+      "yes"
+    ],
+    "annotation.person_size_in_frame": [
+      "large"
+    ],
+    "annotation.person_prominence": [
+      "close"
+    ]
+  },
+  "original_annotation": {
+    "meta": {
+      "model_name": "gemma-4-31B-it",
+      "input_image": "00000017_1683.jpg",
+      "server": {
+        "base_url": "http://10.154.39.57:8001/v1",
+        "max_tokens": 224,
+        "temperature": 0.0
+      }
+    },
+    "annotation": {
+      "file_name": "00000017_1683.jpg",
+      "person_count": "1",
+      "gender": "female",
+      "head_visible": "yes",
+      "shot_type": "half_body",
+      "clothes_visible": "yes",
+      "holding_object": "no",
+      "obvious_makeup": "yes",
+      "expression": "neutral",
+      "hair_visible": "yes",
+      "hair_color": "black",
+      "facial_features_clear": "yes",
+      "face_direction": "frontal",
+      "hand_hold_feasible": "yes",
+      "person_prominence": "close",
+      "person_size_in_frame": "large"
+    }
+  }
+}

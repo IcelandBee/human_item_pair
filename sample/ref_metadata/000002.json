@@ -1,0 +1,81 @@
+{
+  "file_name": "000002.jpg",
+  "image_path": "/mnt/DATA_71/public/data/data_pool/human-item/ref/000002.jpg",
+  "metadata_path": "/mnt/DATA_71/public/data/data_pool/human-item/ref_metadata/000002.json",
+  "original_file_name": "00000000_9187.jpg",
+  "original_stem": "00000000_9187",
+  "original_image_path": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data/物件类-2.1普通场景下的物体_2w_preprocessed-20260528-162925/00000000_9187.jpg",
+  "original_width": 1184,
+  "original_height": 880,
+  "resized_width": 1184,
+  "resized_height": 880,
+  "resize_mode": "crop",
+  "preferred_resolution": [
+    1184,
+    880
+  ],
+  "object_name": "doormat",
+  "object_category": "mat",
+  "object_description": "A rectangular brown doormat with a leaf pattern, lying on a light-colored floor in front of a door.",
+  "coarse_position": {
+    "horizontal": "center",
+    "vertical": "bottom"
+  },
+  "bbox_norm": {
+    "x_min": 0.26,
+    "y_min": 0.27,
+    "x_max": 0.85,
+    "y_max": 0.89
+  },
+  "holdability": "carryable",
+  "suitable_for_holding": true,
+  "should_use": true,
+  "confidence": "high",
+  "reason": "The doormat is the single most dominant and clear object in the image and is a physical item that a person could reasonably carry.",
+  "migration_date": "2026-05-30 11:08:59",
+  "migration_date_compact": "20260530-110859",
+  "migration_source": {
+    "src_image_dir": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data/物件类-2.1普通场景下的物体_2w_preprocessed-20260528-162925",
+    "src_label_dir": "/mnt/DATA_71/public/data/MultiImage_Data/multi_image_data_label/物件类-2.1普通场景下的物体_2w_preprocessed-20260528-162925-20260529-025037/annotations",
+    "meta_input_image": "00000000_9187.jpg",
+    "meta_operator": "object_holdable_labeler"
+  },
+  "filter_rules": {
+    "annotation.should_use": true,
+    "annotation.suitable_for_holding": true,
+    "annotation.holdability": [
+      "handle",
+      "carryable",
+      "pet_holdable"
+    ],
+    "annotation.confidence": [
+      "high"
+    ]
+  },
+  "original_annotation": {
+    "meta": {
+      "operator": "object_holdable_labeler",
+      "input_image": "00000000_9187.jpg"
+    },
+    "annotation": {
+      "object_name": "doormat",
+      "object_category": "mat",
+      "object_description": "A rectangular brown doormat with a leaf pattern, lying on a light-colored floor in front of a door.",
+      "coarse_position": {
+        "horizontal": "center",
+        "vertical": "bottom"
+      },
+      "bbox_norm": {
+        "x_min": 0.26,
+        "y_min": 0.27,
+        "x_max": 0.85,
+        "y_max": 0.89
+      },
+      "holdability": "carryable",
+      "suitable_for_holding": true,
+      "should_use": true,
+      "confidence": "high",
+      "reason": "The doormat is the single most dominant and clear object in the image and is a physical item that a person could reasonably carry."
+    }
+  }
+}

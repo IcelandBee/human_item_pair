@@ -1,0 +1,17 @@
+[
+    {
+        "cond_1": "/mnt/DATA_71/public/data/testing_sets/real_data_testset/1024/human-item/gen/human-item-0001.jpg",
+        "cond_2": "/mnt/DATA_71/public/data/testing_sets/real_data_testset/1024/human-item/ref/human-item-0001.jpg",
+        "prompt": "Let the person in image 1 hold a fluffy ginger and brown cat shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged."
+    },
+    {
+        "cond_1": "/mnt/DATA_71/public/data/testing_sets/real_data_testset/1024/human-item/gen/human-item-0002.jpg",
+        "cond_2": "/mnt/DATA_71/public/data/testing_sets/real_data_testset/1024/human-item/ref/human-item-0002.jpg",
+        "prompt": "Let the person in image 1 hold a single yellow flower shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged."
+    },
+    {
+        "cond_1": "/mnt/DATA_71/public/data/testing_sets/real_data_testset/1024/human-item/gen/human-item-0003.jpg",
+        "cond_2": "/mnt/DATA_71/public/data/testing_sets/real_data_testset/1024/human-item/ref/human-item-0003.jpg",
+        "prompt": "Let the person in image 1 hold a golden waffle ice cream cone shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged."
+    }
+]
