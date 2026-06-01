@@ -1,5 +1,5 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-output/human-item_dryrun_sample.json
-output/human-item_dryrun_sample.audit.jsonl
+output/human-item_dryrun_*.json
+output/human-item_dryrun_*.audit.jsonl

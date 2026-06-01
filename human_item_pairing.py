@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import random
+import sys
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -76,6 +77,7 @@ class PairingConfig:
 
 
 JudgePair = Callable[[ImageItem, ImageItem], dict[str, Any]]
+ProgressCallback = Callable[[dict[str, int]], None]
 
 
 def _positive_int(value: Any) -> int | None:
@@ -433,10 +435,81 @@ def _all_gen_items_from_buckets(
     return items
 
 
+def render_progress_bar(
+    stage: str,
+    accepted: int,
+    target: int,
+    processed_gen: int,
+    attempts: int,
+    width: int = 30,
+) -> str:
+    safe_target = max(1, target)
+    ratio = min(1.0, max(0.0, accepted / safe_target))
+    filled = int(width * ratio)
+    bar = "#" * filled + "-" * (width - filled)
+    percent = ratio * 100
+    return (
+        f"[{stage}] [{bar}] {percent:5.1f}% "
+        f"accepted={accepted}/{target}, "
+        f"processed_gen={processed_gen}, attempts={attempts}"
+    )
+
+
+class ConsoleProgress:
+    def __init__(
+        self,
+        stream: Any | None = None,
+        bar_width: int = 30,
+        non_tty_percent_step: int = 5,
+    ) -> None:
+        self.stream = stream or sys.stderr
+        self.bar_width = bar_width
+        self.non_tty_percent_step = non_tty_percent_step
+        self._last_line_length = 0
+        self._last_non_tty_percent = -non_tty_percent_step
+
+    def stage(self, name: str) -> None:
+        self.stream.write(f"[{name}] start\n")
+        self.stream.flush()
+
+    def pairing(self, snapshot: dict[str, int]) -> None:
+        line = render_progress_bar(
+            stage="配对判断",
+            accepted=snapshot["accepted"],
+            target=snapshot["target"],
+            processed_gen=snapshot["processed_gen"],
+            attempts=snapshot["attempts"],
+            width=self.bar_width,
+        )
+        if self.stream.isatty():
+            padding = " " * max(0, self._last_line_length - len(line))
+            self.stream.write("\r" + line + padding)
+            self._last_line_length = len(line)
+        else:
+            target = max(1, snapshot["target"])
+            current_percent = int((snapshot["accepted"] / target) * 100)
+            should_emit = (
+                current_percent >= self._last_non_tty_percent + self.non_tty_percent_step
+                or snapshot["accepted"] >= snapshot["target"]
+            )
+            if not should_emit:
+                return
+            self._last_non_tty_percent = current_percent
+            self.stream.write(line + "\n")
+        self.stream.flush()
+
+    def finish_pairing_line(self) -> None:
+        if self.stream.isatty() and self._last_line_length:
+            self.stream.write("\n")
+            self.stream.flush()
+            self._last_line_length = 0
+
+
 def run_pairing(
     buckets: dict[str, dict[str, list[ImageItem]]],
     config: PairingConfig,
     judge_pair: JudgePair,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     rng = random.Random(config.seed)
     ref_usage_by_size: dict[str, dict[str, int]] = {
@@ -447,6 +520,18 @@ def run_pairing(
     audit: list[dict[str, Any]] = []
     gen_pool = _all_gen_items_from_buckets(buckets)
     processed_unique_gen: set[str] = set()
+    processed_gen = 0
+    attempts = 0
+
+    def report_progress() -> None:
+        if progress_callback is None:
+            return
+        progress_callback({
+            "accepted": len(results),
+            "target": config.target_count,
+            "processed_gen": processed_gen,
+            "attempts": attempts,
+        })
 
     while len(results) < config.target_count:
         gen_pass = shuffled_gen_pass(gen_pool, rng)
@@ -532,6 +617,10 @@ def run_pairing(
                     "attempted_count": len(attempted_ref_stems),
                 })
 
+            processed_gen += 1
+            attempts += len(attempted_ref_stems)
+            report_progress()
+
         if len(results) >= config.target_count:
             break
         if not config.allow_gen_reuse:
@@ -564,6 +653,25 @@ def write_outputs(
     with audit_jsonl_path.open("w", encoding="utf-8") as f:
         for row in audit:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def format_summary(
+    batch_id: str,
+    seed: int,
+    target_count: int,
+    accepted_count: int,
+    output_json_path: Path,
+    audit_jsonl_path: Path,
+) -> str:
+    return "\n".join([
+        "Summary:",
+        f"batch_id={batch_id}",
+        f"seed={seed}",
+        f"target={target_count}",
+        f"accepted={accepted_count}",
+        f"output={output_json_path}",
+        f"audit={audit_jsonl_path}",
+    ])
 
 
 def make_batch_id(batch_id: str | None) -> str:
@@ -642,11 +750,12 @@ def _configure_no_proxy(base_url: str | None) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
     args = parse_args()
     batch_id = make_batch_id(args.batch_id)
     seed = make_seed(args.seed)
     _configure_no_proxy(args.base_url)
+    progress = ConsoleProgress()
 
     config = PairingConfig(
         target_count=args.target_count,
@@ -658,10 +767,14 @@ def main() -> None:
         allow_gen_reuse=args.allow_gen_reuse,
     )
 
+    progress.stage("准备数据")
     gen_items, gen_audit = build_valid_items(args.gen_dir, args.gen_metadata_dir, "gen")
     ref_items, ref_audit = build_valid_items(args.ref_dir, args.ref_metadata_dir, "ref")
+
+    progress.stage("构建尺寸桶")
     buckets = build_size_buckets(gen_items, ref_items)
 
+    progress.stage("配对判断")
     if args.dry_run_accept_all:
         judge_pair = make_mock_accept_decision
     else:
@@ -684,18 +797,25 @@ def main() -> None:
         buckets=buckets,
         config=config,
         judge_pair=judge_pair,
+        progress_callback=progress.pairing,
     )
+    progress.finish_pairing_line()
     audit = gen_audit + ref_audit + pairing_audit
 
+    progress.stage("写入输出")
     output_json_path, audit_jsonl_path = build_output_paths(args.output_dir, batch_id)
     write_outputs(output_json_path, audit_jsonl_path, results, audit)
 
-    logging.info("batch_id=%s", batch_id)
-    logging.info("seed=%s", seed)
-    logging.info("workers=%s", args.workers)
-    logging.info("accepted=%s target=%s", len(results), args.target_count)
-    logging.info("output_json=%s", output_json_path)
-    logging.info("audit_jsonl=%s", audit_jsonl_path)
+    progress.stage("任务完成")
+    progress.stream.write(format_summary(
+        batch_id=batch_id,
+        seed=seed,
+        target_count=args.target_count,
+        accepted_count=len(results),
+        output_json_path=output_json_path,
+        audit_jsonl_path=audit_jsonl_path,
+    ) + "\n")
+    progress.stream.flush()
 
 
 if __name__ == "__main__":

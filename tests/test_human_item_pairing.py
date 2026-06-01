@@ -11,10 +11,12 @@ from human_item_pairing import (
     choose_balanced_ref,
     compact_gen_metadata,
     compact_ref_metadata,
+    format_summary,
     is_valid_gen_metadata,
     is_valid_ref_metadata,
     make_mock_accept_decision,
     parse_vlm_decision,
+    render_progress_bar,
     resolve_size_key,
     run_pairing,
     should_accept_decision,
@@ -407,3 +409,81 @@ def test_make_mock_accept_decision_returns_valid_prompt():
 
     assert decision["suitable"] is True
     assert should_accept_decision(decision, 0.75) is True
+
+
+def test_render_progress_bar_includes_percent_and_counts():
+    line = render_progress_bar(
+        stage="配对判断",
+        accepted=12,
+        target=100,
+        processed_gen=35,
+        attempts=58,
+        width=10,
+    )
+
+    assert line.startswith("[配对判断]")
+    assert " 12.0%" in line
+    assert "[#---------]" in line
+    assert "accepted=12/100" in line
+    assert "processed_gen=35" in line
+    assert "attempts=58" in line
+
+
+def test_run_pairing_reports_progress_snapshots():
+    gen_items = [make_item("g1"), make_item("g2")]
+    ref_items = [make_item("r1")]
+    buckets = build_size_buckets(gen_items, ref_items)
+    config = PairingConfig(
+        target_count=2,
+        batch_id="unit",
+        seed=123,
+        max_ref_attempts_per_gen=1,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=False,
+    )
+    snapshots = []
+
+    def fake_judge(gen_item, ref_item):
+        return {
+            "suitable": True,
+            "score": 0.9,
+            "reason": "mock accepted",
+            "action": "hold",
+            "object_description": "a mock object",
+            "prompt": "Let the person in image 1 hold a mock object shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged.",
+        }
+
+    results, _ = run_pairing(
+        buckets=buckets,
+        config=config,
+        judge_pair=fake_judge,
+        progress_callback=snapshots.append,
+    )
+
+    assert len(results) == 2
+    assert snapshots[-1] == {
+        "accepted": 2,
+        "target": 2,
+        "processed_gen": 2,
+        "attempts": 2,
+    }
+
+
+def test_format_summary_is_short_and_includes_paths():
+    summary = format_summary(
+        batch_id="exp_v1",
+        seed=20260601,
+        target_count=100,
+        accepted_count=96,
+        output_json_path=Path("output/human-item_exp_v1.json"),
+        audit_jsonl_path=Path("output/human-item_exp_v1.audit.jsonl"),
+    )
+
+    assert summary.startswith("Summary:\n")
+    assert "batch_id=exp_v1" in summary
+    assert "seed=20260601" in summary
+    assert "target=100" in summary
+    assert "accepted=96" in summary
+    assert "output=output\\human-item_exp_v1.json" in summary or "output=output/human-item_exp_v1.json" in summary
+    assert "audit=output\\human-item_exp_v1.audit.jsonl" in summary or "audit=output/human-item_exp_v1.audit.jsonl" in summary
