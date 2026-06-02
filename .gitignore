@@ -11,3 +11,5 @@ output/expression_dryrun_*.json
 output/expression_dryrun_*.audit.jsonl
 output/makeup_dryrun_*.json
 output/makeup_dryrun_*.audit.jsonl
+output/person-texture_dryrun_*.json
+output/person-texture_dryrun_*.audit.jsonl

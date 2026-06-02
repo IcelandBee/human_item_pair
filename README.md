@@ -154,3 +154,29 @@ Outputs:
 
 - `output/makeup_<batch_id>.json`
 - `output/makeup_<batch_id>.audit.jsonl`
+
+## Person Texture
+
+`person_texture_pairing.py` is a separate script for transferring reference textures onto a garment worn by the person in image 1. It uses VLM to choose a clear editable target garment, confirm that image 2 is a usable reference texture, reject texture sources that are too similar to the original garment texture, and check that reference texture complexity is compatible with the target garment's editable surface. Slight blur on the target garment is allowed when the garment remains understandable.
+
+```bash
+python person_texture_pairing.py \
+  --gen-dir sample/person-texture/gen \
+  --gen-metadata-dir sample/person-texture/gen_metadata \
+  --ref-dir sample/person-texture/ref \
+  --ref-metadata-dir sample/person-texture/ref_metadata \
+  --output-dir output \
+  --target-count 100 \
+  --batch-id exp_v1 \
+  --seed 20260602 \
+  --max-ref-attempts-per-gen 5 \
+  --score-threshold 0.75 \
+  --base-url http://10.154.39.57:8001/v1 \
+  --api-key 123456 \
+  --model-name gemma-4-31B-it
+```
+
+Outputs:
+
+- `output/person-texture_<batch_id>.json`
+- `output/person-texture_<batch_id>.audit.jsonl`
