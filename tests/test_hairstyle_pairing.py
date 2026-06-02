@@ -235,6 +235,8 @@ def test_hairstyle_prompt_contains_confirmed_judgement_scope():
     prompt = HAIRSTYLE_SYSTEM_PROMPT.lower()
 
     assert "both images show clear, visible hair" in prompt
+    assert "hairstyle difference" in prompt
+    assert "too similar" in prompt
     assert "hats, headwear, headscarves" in prompt
     assert "hair accessories" in prompt
     assert "blur, severe crop, strong occlusion, or complex background" in prompt
@@ -248,6 +250,7 @@ def test_parse_and_accept_fixed_hairstyle_prompt():
   "suitable": true,
   "score": 0.86,
   "reason": "Both hairstyles are clear and no hats are present.",
+  "hairstyle_difference": "different",
   "prompt": "{FIXED_HAIRSTYLE_PROMPT}"
 }}
 ```"""
@@ -255,6 +258,17 @@ def test_parse_and_accept_fixed_hairstyle_prompt():
     decision = parse_vlm_decision(raw)
 
     assert should_accept_decision(decision, 0.75) is True
+
+
+def test_rejects_too_similar_hairstyle_difference():
+    decision = {
+        "suitable": True,
+        "score": 0.95,
+        "hairstyle_difference": "too_similar",
+        "prompt": FIXED_HAIRSTYLE_PROMPT,
+    }
+
+    assert should_accept_decision(decision, 0.75) is False
 
 
 def test_rejects_non_hairstyle_prompt_format():
@@ -286,6 +300,7 @@ def test_run_pairing_outputs_fixed_prompt():
             "suitable": True,
             "score": 0.9,
             "reason": "mock accepted",
+            "hairstyle_difference": "different",
             "prompt": FIXED_HAIRSTYLE_PROMPT,
         }
 
@@ -307,6 +322,7 @@ def test_mock_accept_decision_returns_fixed_prompt():
     decision = make_mock_accept_decision(make_item("g"), make_item("r"))
 
     assert decision["prompt"] == FIXED_HAIRSTYLE_PROMPT
+    assert decision["hairstyle_difference"] == "different"
     assert should_accept_decision(decision, 0.75) is True
 
 

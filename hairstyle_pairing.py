@@ -43,10 +43,11 @@ Decide whether this pair is suitable for transferring the hair color and hairsty
 
 Focus only on these suitability points:
 1. Both images show clear, visible hair. The target person's hair in image 1 and the reference hairstyle in image 2 must be recognizable enough for hairstyle transfer.
-2. Reject when hats, headwear, headscarves, large hair accessories, helmets, headphones, hands, or objects strongly hide or define the hairstyle.
-3. Reject when blur, severe crop, strong occlusion, or complex background makes the hair boundary or hairstyle unclear.
-4. Do not reject only because of gender, age, face direction, or expression.
-5. Do not reject only because the transferred hairstyle may cover part of the face. Hair naturally covering eyes, forehead, cheeks, shoulders, or clothing is allowed when the hairstyle itself is clear.
+2. Check the hairstyle difference between image 1 and image 2. Reject if the target hairstyle and reference hairstyle are the same or too similar in hair length, shape, volume, bangs/fringe, curliness, and overall silhouette. A color-only change is not enough if the hairstyle shape is almost the same.
+3. Reject when hats, headwear, headscarves, large hair accessories, helmets, headphones, hands, or objects strongly hide or define the hairstyle.
+4. Reject when blur, severe crop, strong occlusion, or complex background makes the hair boundary or hairstyle unclear.
+5. Do not reject only because of gender, age, face direction, or expression.
+6. Do not reject only because the transferred hairstyle may cover part of the face. Hair naturally covering eyes, forehead, cheeks, shoulders, or clothing is allowed when the hairstyle itself is clear.
 
 The output prompt is fixed. If suitable, use exactly this prompt:
 Transfer the hair color and hairstyle from the person in the image 2 to the person in image 1, keeping the rest unchanged. Ensure the hairstyle and color are natural and match the person's facial features.
@@ -56,6 +57,7 @@ Return strict JSON only:
   "suitable": true or false,
   "score": a number from 0 to 1,
   "reason": "short reason",
+  "hairstyle_difference": "different, same, too_similar, or unclear",
   "prompt": "the fixed prompt above if suitable, or empty string if unsuitable"
 }
 """.strip()
@@ -303,6 +305,9 @@ def should_accept_decision(decision: dict[str, Any], score_threshold: float) -> 
     if not isinstance(score, (int, float)) or isinstance(score, bool):
         return False
     if float(score) < score_threshold:
+        return False
+    hairstyle_difference = str(decision.get("hairstyle_difference", "")).strip().lower()
+    if hairstyle_difference in {"", "same", "too_similar", "unclear"}:
         return False
     return decision.get("prompt") == FIXED_HAIRSTYLE_PROMPT
 
@@ -566,6 +571,7 @@ def run_pairing(
                     "suitable": decision.get("suitable"),
                     "score": decision.get("score"),
                     "reason": decision.get("reason"),
+                    "hairstyle_difference": decision.get("hairstyle_difference", ""),
                     "prompt": decision.get("prompt", ""),
                 })
 
@@ -664,6 +670,7 @@ def make_mock_accept_decision(gen_item: ImageItem, ref_item: ImageItem) -> dict[
         "suitable": True,
         "score": 1.0,
         "reason": "dry-run accept-all mode",
+        "hairstyle_difference": "different",
         "prompt": FIXED_HAIRSTYLE_PROMPT,
     }
 

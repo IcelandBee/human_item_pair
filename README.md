@@ -79,7 +79,7 @@ Outputs:
 
 ## Hairstyle
 
-`hairstyle_pairing.py` is a separate script for hairstyle transfer pairing. It uses VLM only to judge whether both images have clear usable hair and no strong hat/headwear/accessory, occlusion, crop, blur, or background risk. Gender, face direction, and normal hair covering part of the face are not rejection reasons.
+`hairstyle_pairing.py` is a separate script for hairstyle transfer pairing. It uses VLM to judge whether both images have clear usable hair, whether the target and reference hairstyles are visibly different enough, and whether there is no strong hat/headwear/accessory, occlusion, crop, blur, or background risk. Gender, face direction, and normal hair covering part of the face are not rejection reasons.
 
 ```bash
 python hairstyle_pairing.py \
