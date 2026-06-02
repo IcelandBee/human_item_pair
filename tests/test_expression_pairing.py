@@ -296,14 +296,15 @@ def test_get_expression_reads_annotation():
     assert get_expression(make_item("r", metadata=make_metadata("sad"))) == "sad"
 
 
-def test_choose_next_ref_prefers_underrepresented_expression():
+def test_choose_next_ref_respects_smile_and_big_laugh_soft_caps():
     refs_by_expression = {
         "smile": [make_item("smile1", metadata=make_metadata("smile"))],
         "big_laugh": [make_item("laugh1", metadata=make_metadata("big_laugh"))],
         "angry": [make_item("angry1", metadata=make_metadata("angry"))],
+        "sad": [make_item("sad1", metadata=make_metadata("sad"))],
     }
-    accepted_by_expression = {"smile": 3, "big_laugh": 2, "angry": 0}
-    ref_usage = {"smile1": 0, "laugh1": 0, "angry1": 0}
+    accepted_by_expression = {"smile": 2, "big_laugh": 2, "angry": 3, "sad": 3}
+    ref_usage = {"smile1": 0, "laugh1": 0, "angry1": 0, "sad1": 0}
 
     selected = choose_next_ref(
         refs_by_expression=refs_by_expression,
@@ -311,32 +312,62 @@ def test_choose_next_ref_prefers_underrepresented_expression():
         ref_usage_count=ref_usage,
         blocked_ref_stems=set(),
         rng=random.Random(1),
+        max_smile_ratio=0.2,
+        max_big_laugh_ratio=0.2,
     )
 
     assert selected is not None
-    assert get_expression(selected) == "angry"
+    assert get_expression(selected) in {"angry", "sad"}
 
 
-def test_run_pairing_is_ref_driven_and_balances_expression_distribution():
+def test_choose_next_ref_falls_back_to_capped_expression_when_needed():
+    refs_by_expression = {
+        "smile": [make_item("smile1", metadata=make_metadata("smile"))],
+        "big_laugh": [make_item("laugh1", metadata=make_metadata("big_laugh"))],
+    }
+    accepted_by_expression = {"smile": 2, "big_laugh": 2}
+    ref_usage = {"smile1": 0, "laugh1": 0}
+
+    selected = choose_next_ref(
+        refs_by_expression=refs_by_expression,
+        accepted_by_expression=accepted_by_expression,
+        ref_usage_count=ref_usage,
+        blocked_ref_stems={"laugh1"},
+        rng=random.Random(1),
+        max_smile_ratio=0.2,
+        max_big_laugh_ratio=0.2,
+    )
+
+    assert selected is not None
+    assert get_expression(selected) == "smile"
+
+
+def test_run_pairing_is_ref_driven_and_limits_smile_big_laugh_distribution():
     gen_items = [
         make_item("g1", metadata=make_metadata("neutral")),
         make_item("g2", metadata=make_metadata("neutral")),
         make_item("g3", metadata=make_metadata("neutral")),
+        make_item("g4", metadata=make_metadata("neutral")),
+        make_item("g5", metadata=make_metadata("neutral")),
     ]
     ref_items = [
         make_item("smile1", metadata=make_metadata("smile")),
         make_item("laugh1", metadata=make_metadata("big_laugh")),
         make_item("angry1", metadata=make_metadata("angry")),
+        make_item("sad1", metadata=make_metadata("sad")),
+        make_item("worried1", metadata=make_metadata("worried")),
     ]
     buckets = build_size_buckets(gen_items, ref_items)
     config = PairingConfig(
-        target_count=3,
+        target_count=5,
         batch_id="unit",
         seed=123,
         max_ref_attempts_per_gen=3,
         score_threshold=0.75,
         workers=1,
         allow_gen_reuse=False,
+        max_smile_ratio=0.2,
+        max_big_laugh_ratio=0.2,
     )
 
     def fake_judge(gen_item, ref_item):
@@ -349,13 +380,16 @@ def test_run_pairing_is_ref_driven_and_balances_expression_distribution():
 
     results, audit = run_pairing(buckets, config, fake_judge)
 
-    assert len(results) == 3
+    assert len(results) == 5
     assert results[0]["prompt"] == FIXED_EXPRESSION_PROMPT
     assert results[0]["width"] == 624
     assert results[0]["height"] == 416
     accepted_rows = [row for row in audit if row["event"] == "pair_accepted"]
-    assert len(accepted_rows) == 3
-    assert {row["ref_expression"] for row in accepted_rows} == {"smile", "big_laugh", "angry"}
+    accepted_expressions = [row["ref_expression"] for row in accepted_rows]
+    assert len(accepted_rows) == 5
+    assert accepted_expressions.count("smile") <= 1
+    assert accepted_expressions.count("big_laugh") <= 1
+    assert sum(expr not in {"smile", "big_laugh"} for expr in accepted_expressions) >= 3
 
 
 def test_output_paths_use_expression_prefix():

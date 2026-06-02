@@ -105,7 +105,7 @@ Outputs:
 
 ## Expression
 
-`expression_pairing.py` is a separate script for facial expression transfer pairing. It uses VLM to judge whether the target face is editable, whether the reference expression regions are clear, whether eyes, eyebrows, mouth, and facial contour are not strongly blocked, blurred, or cropped, and whether the two expressions are visibly different enough to be useful. Pairing is ref-driven and softly balances accepted pairs across reference expression categories.
+`expression_pairing.py` is a separate script for facial expression transfer pairing. It uses VLM to judge whether the target face is editable, whether the reference expression regions are clear, whether eyes, eyebrows, mouth, and facial contour are not strongly blocked, blurred, or cropped, and whether the two expressions are visibly different enough to be useful. Pairing is ref-driven and can softly limit the accepted share of `smile` and `big_laugh` references while choosing other expression references randomly.
 
 ```bash
 python expression_pairing.py \
@@ -119,6 +119,8 @@ python expression_pairing.py \
   --seed 20260602 \
   --max-ref-attempts-per-gen 5 \
   --score-threshold 0.75 \
+  --max-smile-ratio 0.25 \
+  --max-big-laugh-ratio 0.25 \
   --base-url http://10.154.39.57:8001/v1 \
   --api-key 123456 \
   --model-name gemma-4-31B-it

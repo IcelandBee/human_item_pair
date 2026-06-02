@@ -85,6 +85,8 @@ class PairingConfig:
     score_threshold: float
     workers: int
     allow_gen_reuse: bool
+    max_smile_ratio: float = 1.0
+    max_big_laugh_ratio: float = 1.0
 
 
 JudgePair = Callable[[ImageItem, ImageItem], dict[str, Any]]
@@ -308,25 +310,42 @@ def choose_next_ref(
     ref_usage_count: dict[str, int],
     blocked_ref_stems: set[str],
     rng: random.Random,
+    max_smile_ratio: float = 1.0,
+    max_big_laugh_ratio: float = 1.0,
 ) -> ImageItem | None:
-    expression_order = sorted(
-        refs_by_expression,
-        key=lambda expression: (accepted_by_expression.get(expression, 0), expression),
-    )
-    for expression in expression_order:
-        candidates = [
-            ref for ref in refs_by_expression[expression]
-            if ref.stem not in blocked_ref_stems
-        ]
-        if not candidates:
+    soft_caps = {
+        "smile": max_smile_ratio,
+        "big_laugh": max_big_laugh_ratio,
+    }
+    all_candidates = [
+        ref
+        for refs in refs_by_expression.values()
+        for ref in refs
+        if ref.stem not in blocked_ref_stems
+    ]
+    if not all_candidates:
+        return None
+
+    current_total = sum(accepted_by_expression.values())
+    next_total = current_total + 1
+    allowed_candidates: list[ImageItem] = []
+    for ref in all_candidates:
+        expression = get_expression(ref)
+        cap = soft_caps.get(expression)
+        if cap is None:
+            allowed_candidates.append(ref)
             continue
-        min_usage = min(ref_usage_count.get(ref.stem, 0) for ref in candidates)
-        least_used = [
-            ref for ref in candidates
-            if ref_usage_count.get(ref.stem, 0) == min_usage
-        ]
-        return rng.choice(least_used)
-    return None
+        next_count = accepted_by_expression.get(expression, 0) + 1
+        if next_count / max(1, next_total) <= cap:
+            allowed_candidates.append(ref)
+
+    candidates = allowed_candidates or all_candidates
+    min_usage = min(ref_usage_count.get(ref.stem, 0) for ref in candidates)
+    least_used = [
+        ref for ref in candidates
+        if ref_usage_count.get(ref.stem, 0) == min_usage
+    ]
+    return rng.choice(least_used)
 
 
 def _strip_markdown_fence(text: str) -> str:
@@ -598,6 +617,8 @@ def run_pairing(
                 ref_usage_count=ref_usage_count,
                 blocked_ref_stems=blocked_ref_stems,
                 rng=rng,
+                max_smile_ratio=config.max_smile_ratio,
+                max_big_laugh_ratio=config.max_big_laugh_ratio,
             )
             if ref_item is None:
                 break
@@ -794,6 +815,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--max-ref-attempts-per-gen", type=int, default=5)
     parser.add_argument("--score-threshold", type=float, default=0.75)
+    parser.add_argument("--max-smile-ratio", type=float, default=1.0)
+    parser.add_argument("--max-big-laugh-ratio", type=float, default=1.0)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--allow-gen-reuse", action="store_true")
     parser.add_argument("--base-url", type=str, default=None)
@@ -822,6 +845,12 @@ def _configure_no_proxy(base_url: str | None) -> None:
         os.environ.pop(proxy_key, None)
 
 
+def _validate_ratio(name: str, value: float) -> float:
+    if value < 0 or value > 1:
+        raise ValueError(f"{name} must be between 0 and 1")
+    return value
+
+
 def main() -> None:
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
     args = parse_args()
@@ -838,6 +867,8 @@ def main() -> None:
         score_threshold=args.score_threshold,
         workers=args.workers,
         allow_gen_reuse=args.allow_gen_reuse,
+        max_smile_ratio=_validate_ratio("--max-smile-ratio", args.max_smile_ratio),
+        max_big_laugh_ratio=_validate_ratio("--max-big-laugh-ratio", args.max_big_laugh_ratio),
     )
 
     progress.stage("prepare-data")
