@@ -105,7 +105,7 @@ Outputs:
 
 ## Expression
 
-`expression_pairing.py` is a separate script for facial expression transfer pairing. It uses VLM to judge whether the target face is editable, whether the reference expression regions are clear, and whether eyes, eyebrows, mouth, and facial contour are not strongly blocked, blurred, or cropped. Ambiguous emotion labels are allowed as long as the facial expression is visible.
+`expression_pairing.py` is a separate script for facial expression transfer pairing. It uses VLM to judge whether the target face is editable, whether the reference expression regions are clear, whether eyes, eyebrows, mouth, and facial contour are not strongly blocked, blurred, or cropped, and whether the two expressions are visibly different enough to be useful. Pairing is ref-driven and softly balances accepted pairs across reference expression categories.
 
 ```bash
 python expression_pairing.py \

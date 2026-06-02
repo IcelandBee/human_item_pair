@@ -47,6 +47,7 @@ Focus on these suitability points:
 3. Reject when key expression regions such as eyes, eyebrows, mouth, or facial contour are blocked by hands, masks, sunglasses, objects, severe hair occlusion, blur, or severe crop.
 4. Check that face direction and visible face region are compatible enough to transfer the expression while keeping the target person's pose, head angle, and background unchanged.
 5. Reject if the edit would require changing the target person's head angle, pose, identity, background, or overall face structure.
+6. Check the expression difference between image 1 and image 2. Reject if the target expression and reference expression are visually too similar, such as both being nearly neutral, both having only a faint smile, or having no clear difference in eyes, eyebrows, or mouth.
 
 Do not reject because the expression category is ambiguous. The task is expression transfer, so any visually clear expression is acceptable even if its emotion label is not obvious.
 Do not reject because of gender, age, hairstyle, or makeup unless they directly prevent clear recognition of the eyes, eyebrows, mouth, or facial expression.
@@ -294,6 +295,40 @@ def choose_balanced_ref(
     return rng.choice(least_used)
 
 
+def get_expression(item: ImageItem) -> str:
+    expression = _annotation(item.metadata).get("expression")
+    if isinstance(expression, str) and expression.strip():
+        return expression.strip()
+    return "unknown"
+
+
+def choose_next_ref(
+    refs_by_expression: dict[str, list[ImageItem]],
+    accepted_by_expression: dict[str, int],
+    ref_usage_count: dict[str, int],
+    blocked_ref_stems: set[str],
+    rng: random.Random,
+) -> ImageItem | None:
+    expression_order = sorted(
+        refs_by_expression,
+        key=lambda expression: (accepted_by_expression.get(expression, 0), expression),
+    )
+    for expression in expression_order:
+        candidates = [
+            ref for ref in refs_by_expression[expression]
+            if ref.stem not in blocked_ref_stems
+        ]
+        if not candidates:
+            continue
+        min_usage = min(ref_usage_count.get(ref.stem, 0) for ref in candidates)
+        least_used = [
+            ref for ref in candidates
+            if ref_usage_count.get(ref.stem, 0) == min_usage
+        ]
+        return rng.choice(least_used)
+    return None
+
+
 def _strip_markdown_fence(text: str) -> str:
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -426,6 +461,15 @@ def _all_gen_items_from_buckets(
     return items
 
 
+def _all_ref_items_from_buckets(
+    buckets: dict[str, dict[str, list[ImageItem]]],
+) -> list[ImageItem]:
+    items: list[ImageItem] = []
+    for size_key in sorted(buckets):
+        items.extend(buckets[size_key]["ref"])
+    return items
+
+
 def get_output_dimensions(gen_item: ImageItem) -> dict[str, int]:
     width = _positive_int(gen_item.metadata.get("resized_width"))
     height = _positive_int(gen_item.metadata.get("resized_height"))
@@ -518,9 +562,13 @@ def run_pairing(
     progress_callback: ProgressCallback | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rng = random.Random(config.seed)
-    ref_usage_by_size: dict[str, dict[str, int]] = {
-        size_key: {ref.stem: 0 for ref in bucket["ref"]}
-        for size_key, bucket in buckets.items()
+    all_refs = _all_ref_items_from_buckets(buckets)
+    refs_by_expression: dict[str, list[ImageItem]] = defaultdict(list)
+    for ref in all_refs:
+        refs_by_expression[get_expression(ref)].append(ref)
+    ref_usage_count: dict[str, int] = {ref.stem: 0 for ref in all_refs}
+    accepted_by_expression: dict[str, int] = {
+        expression: 0 for expression in refs_by_expression
     }
     results: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
@@ -540,38 +588,46 @@ def run_pairing(
         })
 
     while len(results) < config.target_count:
-        gen_pass = shuffled_gen_pass(gen_pool, rng)
+        blocked_ref_stems: set[str] = set()
         accepted_in_pass = 0
 
-        for gen_item in gen_pass:
-            if len(results) >= config.target_count:
+        while len(results) < config.target_count:
+            ref_item = choose_next_ref(
+                refs_by_expression=refs_by_expression,
+                accepted_by_expression=accepted_by_expression,
+                ref_usage_count=ref_usage_count,
+                blocked_ref_stems=blocked_ref_stems,
+                rng=rng,
+            )
+            if ref_item is None:
                 break
-            if not config.allow_gen_reuse and gen_item.stem in processed_unique_gen:
+
+            refs_expression = get_expression(ref_item)
+            gen_candidates = [
+                gen for gen in buckets[ref_item.size_key]["gen"]
+                if config.allow_gen_reuse or gen.stem not in processed_unique_gen
+            ]
+            if not gen_candidates:
+                audit.append({
+                    "event": "no_gen_candidates_left",
+                    "batch_id": config.batch_id,
+                    "seed": config.seed,
+                    "size_key": ref_item.size_key,
+                    "ref_path": str(ref_item.image_path),
+                    "ref_expression": refs_expression,
+                })
+                blocked_ref_stems.add(ref_item.stem)
                 continue
-            processed_unique_gen.add(gen_item.stem)
 
-            refs = buckets[gen_item.size_key]["ref"]
-            attempted_ref_stems: set[str] = set()
-            accepted_for_gen = False
+            rng.shuffle(gen_candidates)
+            attempted_gen_stems: set[str] = set()
+            accepted_for_ref = False
 
-            for attempt_index in range(1, config.max_ref_attempts_per_gen + 1):
-                ref_item = choose_balanced_ref(
-                    refs=refs,
-                    ref_usage_count=ref_usage_by_size[gen_item.size_key],
-                    attempted_ref_stems=attempted_ref_stems,
-                    rng=rng,
-                )
-                if ref_item is None:
-                    audit.append({
-                        "event": "no_ref_candidates_left",
-                        "batch_id": config.batch_id,
-                        "seed": config.seed,
-                        "size_key": gen_item.size_key,
-                        "gen_path": str(gen_item.image_path),
-                    })
-                    break
-
-                attempted_ref_stems.add(ref_item.stem)
+            for attempt_index, gen_item in enumerate(
+                gen_candidates[:config.max_ref_attempts_per_gen],
+                start=1,
+            ):
+                attempted_gen_stems.add(gen_item.stem)
                 try:
                     decision = judge_pair(gen_item, ref_item)
                     accepted = should_accept_decision(decision, config.score_threshold)
@@ -583,7 +639,8 @@ def run_pairing(
                         "size_key": gen_item.size_key,
                         "gen_path": str(gen_item.image_path),
                         "ref_path": str(ref_item.image_path),
-                        "attempt_index_for_gen": attempt_index,
+                        "ref_expression": refs_expression,
+                        "attempt_index_for_ref": attempt_index,
                         "error": repr(exc),
                     })
                     continue
@@ -595,7 +652,8 @@ def run_pairing(
                     "size_key": gen_item.size_key,
                     "gen_path": str(gen_item.image_path),
                     "ref_path": str(ref_item.image_path),
-                    "attempt_index_for_gen": attempt_index,
+                    "ref_expression": refs_expression,
+                    "attempt_index_for_ref": attempt_index,
                     "suitable": decision.get("suitable"),
                     "score": decision.get("score"),
                     "reason": decision.get("reason"),
@@ -603,7 +661,9 @@ def run_pairing(
                 })
 
                 if accepted:
-                    ref_usage_by_size[gen_item.size_key][ref_item.stem] += 1
+                    ref_usage_count[ref_item.stem] += 1
+                    accepted_by_expression[refs_expression] = accepted_by_expression.get(refs_expression, 0) + 1
+                    processed_unique_gen.add(gen_item.stem)
                     result = {
                         "cond_1": str(gen_item.image_path),
                         "cond_2": str(ref_item.image_path),
@@ -611,32 +671,43 @@ def run_pairing(
                     }
                     result.update(get_output_dimensions(gen_item))
                     results.append(result)
-                    accepted_for_gen = True
+                    accepted_for_ref = True
                     accepted_in_pass += 1
                     break
 
-            if not accepted_for_gen:
+            attempts += len(attempted_gen_stems)
+            processed_gen += len(attempted_gen_stems)
+            if not accepted_for_ref:
                 audit.append({
-                    "event": "gen_skipped_after_attempts",
+                    "event": "ref_skipped_after_attempts",
                     "batch_id": config.batch_id,
                     "seed": config.seed,
-                    "size_key": gen_item.size_key,
-                    "gen_path": str(gen_item.image_path),
-                    "attempted_count": len(attempted_ref_stems),
+                    "size_key": ref_item.size_key,
+                    "ref_path": str(ref_item.image_path),
+                    "ref_expression": refs_expression,
+                    "attempted_count": len(attempted_gen_stems),
                 })
+                blocked_ref_stems.add(ref_item.stem)
 
-            processed_gen += 1
-            attempts += len(attempted_ref_stems)
             report_progress()
 
         if len(results) >= config.target_count:
-            break
-        if not config.allow_gen_reuse:
             break
         if accepted_in_pass == 0:
             break
 
     return results, audit
+
+
+def count_accepted_expressions(audit: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for row in audit:
+        if row.get("event") != "pair_accepted":
+            continue
+        expression = row.get("ref_expression")
+        if isinstance(expression, str) and expression:
+            counts[expression] += 1
+    return dict(counts)
 
 
 def build_output_paths(output_dir: Path, batch_id: str) -> tuple[Path, Path]:
@@ -670,8 +741,9 @@ def format_summary(
     accepted_count: int,
     output_json_path: Path,
     audit_jsonl_path: Path,
+    expression_counts: dict[str, int] | None = None,
 ) -> str:
-    return "\n".join([
+    lines = [
         "Summary:",
         f"batch_id={batch_id}",
         f"seed={seed}",
@@ -679,7 +751,14 @@ def format_summary(
         f"accepted={accepted_count}",
         f"output={output_json_path}",
         f"audit={audit_jsonl_path}",
-    ])
+    ]
+    if expression_counts:
+        distribution = ", ".join(
+            f"{expression}:{count}"
+            for expression, count in sorted(expression_counts.items())
+        )
+        lines.append(f"expression_distribution={distribution}")
+    return "\n".join(lines)
 
 
 def make_batch_id(batch_id: str | None) -> str:
@@ -808,6 +887,7 @@ def main() -> None:
         accepted_count=len(results),
         output_json_path=output_json_path,
         audit_jsonl_path=audit_jsonl_path,
+        expression_counts=count_accepted_expressions(pairing_audit),
     ) + "\n")
     progress.stream.flush()
 

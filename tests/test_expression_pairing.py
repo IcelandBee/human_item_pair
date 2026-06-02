@@ -11,9 +11,11 @@ from expression_pairing import (
     build_size_buckets,
     build_valid_items,
     choose_balanced_ref,
+    choose_next_ref,
     compact_person_metadata,
     format_summary,
     get_output_dimensions,
+    get_expression,
     is_valid_gen_metadata,
     is_valid_ref_metadata,
     make_mock_accept_decision,
@@ -27,6 +29,22 @@ from expression_pairing import (
 )
 
 
+def make_metadata(expression: str = "neutral", width: int = 1248, height: int = 832):
+    return {
+        "resized_width": width,
+        "resized_height": height,
+        "original_annotation": {
+            "annotation": {
+                "person_count": "1",
+                "head_visible": "yes",
+                "expression": expression,
+                "facial_features_clear": "yes",
+                "face_direction": "frontal",
+            }
+        },
+    }
+
+
 def make_item(stem: str, size_key: str = "1248x832", metadata=None) -> ImageItem:
     return ImageItem(
         stem=stem,
@@ -34,7 +52,7 @@ def make_item(stem: str, size_key: str = "1248x832", metadata=None) -> ImageItem
         image_path=Path(f"{stem}.jpg"),
         metadata_path=Path(f"{stem}.json"),
         size_key=size_key,
-        metadata=metadata or {"resized_width": 1248, "resized_height": 832},
+        metadata=metadata or make_metadata(),
         dimension_source="resized_width_height",
     )
 
@@ -239,6 +257,8 @@ def test_expression_prompt_contains_confirmed_judgement_scope():
     assert "gender, age, hairstyle, or makeup" in prompt
     assert "face direction and visible face region are compatible" in prompt
     assert "pose, head angle, and background unchanged" in prompt
+    assert "expression difference" in prompt
+    assert "too similar" in prompt
 
 
 def test_parse_and_accept_fixed_expression_prompt():
@@ -272,15 +292,48 @@ def test_get_output_dimensions_halves_resized_dimensions():
     assert get_output_dimensions(item) == {"width": 624, "height": 416}
 
 
-def test_run_pairing_outputs_fixed_prompt_and_dimensions():
-    gen_items = [make_item("g1"), make_item("g2")]
-    ref_items = [make_item("r1")]
+def test_get_expression_reads_annotation():
+    assert get_expression(make_item("r", metadata=make_metadata("sad"))) == "sad"
+
+
+def test_choose_next_ref_prefers_underrepresented_expression():
+    refs_by_expression = {
+        "smile": [make_item("smile1", metadata=make_metadata("smile"))],
+        "big_laugh": [make_item("laugh1", metadata=make_metadata("big_laugh"))],
+        "angry": [make_item("angry1", metadata=make_metadata("angry"))],
+    }
+    accepted_by_expression = {"smile": 3, "big_laugh": 2, "angry": 0}
+    ref_usage = {"smile1": 0, "laugh1": 0, "angry1": 0}
+
+    selected = choose_next_ref(
+        refs_by_expression=refs_by_expression,
+        accepted_by_expression=accepted_by_expression,
+        ref_usage_count=ref_usage,
+        blocked_ref_stems=set(),
+        rng=random.Random(1),
+    )
+
+    assert selected is not None
+    assert get_expression(selected) == "angry"
+
+
+def test_run_pairing_is_ref_driven_and_balances_expression_distribution():
+    gen_items = [
+        make_item("g1", metadata=make_metadata("neutral")),
+        make_item("g2", metadata=make_metadata("neutral")),
+        make_item("g3", metadata=make_metadata("neutral")),
+    ]
+    ref_items = [
+        make_item("smile1", metadata=make_metadata("smile")),
+        make_item("laugh1", metadata=make_metadata("big_laugh")),
+        make_item("angry1", metadata=make_metadata("angry")),
+    ]
     buckets = build_size_buckets(gen_items, ref_items)
     config = PairingConfig(
-        target_count=2,
+        target_count=3,
         batch_id="unit",
         seed=123,
-        max_ref_attempts_per_gen=1,
+        max_ref_attempts_per_gen=3,
         score_threshold=0.75,
         workers=1,
         allow_gen_reuse=False,
@@ -296,11 +349,13 @@ def test_run_pairing_outputs_fixed_prompt_and_dimensions():
 
     results, audit = run_pairing(buckets, config, fake_judge)
 
-    assert len(results) == 2
+    assert len(results) == 3
     assert results[0]["prompt"] == FIXED_EXPRESSION_PROMPT
     assert results[0]["width"] == 624
     assert results[0]["height"] == 416
-    assert len([row for row in audit if row["event"] == "pair_accepted"]) == 2
+    accepted_rows = [row for row in audit if row["event"] == "pair_accepted"]
+    assert len(accepted_rows) == 3
+    assert {row["ref_expression"] for row in accepted_rows} == {"smile", "big_laugh", "angry"}
 
 
 def test_output_paths_use_expression_prefix():
@@ -326,11 +381,13 @@ def test_progress_and_summary_helpers():
         accepted_count=2,
         output_json_path=Path("output/expression_exp.json"),
         audit_jsonl_path=Path("output/expression_exp.audit.jsonl"),
+        expression_counts={"smile": 1, "sad": 1},
     )
 
     assert " 20.0%" in line
     assert "accepted=2/10" in line
     assert "batch_id=exp" in summary
+    assert "expression_distribution=sad:1, smile:1" in summary
 
 
 def test_write_outputs_writes_json_and_audit(tmp_path):
