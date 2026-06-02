@@ -102,3 +102,29 @@ Outputs:
 
 - `output/hairstyle_<batch_id>.json`
 - `output/hairstyle_<batch_id>.audit.jsonl`
+
+## Expression
+
+`expression_pairing.py` is a separate script for facial expression transfer pairing. It uses VLM to judge whether the target face is editable, whether the reference expression regions are clear, and whether eyes, eyebrows, mouth, and facial contour are not strongly blocked, blurred, or cropped. Ambiguous emotion labels are allowed as long as the facial expression is visible.
+
+```bash
+python expression_pairing.py \
+  --gen-dir sample/expression/gen \
+  --gen-metadata-dir sample/expression/gen_metadata \
+  --ref-dir sample/expression/ref \
+  --ref-metadata-dir sample/expression/ref_metadata \
+  --output-dir output \
+  --target-count 100 \
+  --batch-id exp_v1 \
+  --seed 20260602 \
+  --max-ref-attempts-per-gen 5 \
+  --score-threshold 0.75 \
+  --base-url http://10.154.39.57:8001/v1 \
+  --api-key 123456 \
+  --model-name gemma-4-31B-it
+```
+
+Outputs:
+
+- `output/expression_<batch_id>.json`
+- `output/expression_<batch_id>.audit.jsonl`
