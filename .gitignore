@@ -5,3 +5,5 @@ output/human-item_dryrun_*.json
 output/human-item_dryrun_*.audit.jsonl
 output/virtual-clothing_dryrun_*.json
 output/virtual-clothing_dryrun_*.audit.jsonl
+output/hairstyle_dryrun_*.json
+output/hairstyle_dryrun_*.audit.jsonl

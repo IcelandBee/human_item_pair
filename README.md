@@ -76,3 +76,29 @@ Outputs:
 
 - `output/virtual-clothing_<batch_id>.json`
 - `output/virtual-clothing_<batch_id>.audit.jsonl`
+
+## Hairstyle
+
+`hairstyle_pairing.py` is a separate script for hairstyle transfer pairing. It uses VLM only to judge whether both images have clear usable hair and no strong hat/headwear/accessory, occlusion, crop, blur, or background risk. Gender, face direction, and normal hair covering part of the face are not rejection reasons.
+
+```bash
+python hairstyle_pairing.py \
+  --gen-dir sample/haitstyle/gen \
+  --gen-metadata-dir sample/haitstyle/gen_metadata \
+  --ref-dir sample/haitstyle/ref \
+  --ref-metadata-dir sample/haitstyle/ref_metadata \
+  --output-dir output \
+  --target-count 100 \
+  --batch-id exp_v1 \
+  --seed 20260602 \
+  --max-ref-attempts-per-gen 5 \
+  --score-threshold 0.75 \
+  --base-url http://10.154.39.57:8001/v1 \
+  --api-key 123456 \
+  --model-name gemma-4-31B-it
+```
+
+Outputs:
+
+- `output/hairstyle_<batch_id>.json`
+- `output/hairstyle_<batch_id>.audit.jsonl`
