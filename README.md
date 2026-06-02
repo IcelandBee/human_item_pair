@@ -128,3 +128,29 @@ Outputs:
 
 - `output/expression_<batch_id>.json`
 - `output/expression_<batch_id>.audit.jsonl`
+
+## Makeup
+
+`makeup_pairing.py` is a separate script for makeup transfer pairing. It uses VLM to judge whether the target face and key makeup regions are clear, whether the reference makeup is visible and mainly on the face, and whether masks, sunglasses, hands, hair, props, strong shadow, blur, or overexposure create transfer risk. It also keeps accepted `gen` images near a 3:7 male:female ratio within the current batch; `ref` images are still selected randomly while balancing per-batch usage.
+
+```bash
+python makeup_pairing.py \
+  --gen-dir sample/makeup/gen \
+  --gen-metadata-dir sample/makeup/gen_metadata \
+  --ref-dir sample/makeup/ref \
+  --ref-metadata-dir sample/makeup/ref_metadata \
+  --output-dir output \
+  --target-count 100 \
+  --batch-id exp_v1 \
+  --seed 20260602 \
+  --max-ref-attempts-per-gen 5 \
+  --score-threshold 0.75 \
+  --base-url http://10.154.39.57:8001/v1 \
+  --api-key 123456 \
+  --model-name gemma-4-31B-it
+```
+
+Outputs:
+
+- `output/makeup_<batch_id>.json`
+- `output/makeup_<batch_id>.audit.jsonl`
