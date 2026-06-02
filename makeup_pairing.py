@@ -27,8 +27,8 @@ MALE_RATIO = 3
 FEMALE_RATIO = 7
 
 FIXED_MAKEUP_PROMPT = (
-    "Transfer the makeup style from the person in image 2 to the person in image 1, "
-    "while keeping the person's identity, facial structure, pose, expression, hairstyle, clothing, and background unchanged."
+    "Transfer the facial makeup from the person in image 2 to the person in image 1, "
+    "keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features."
 )
 
 MAKEUP_SYSTEM_PROMPT = """
@@ -50,7 +50,7 @@ Focus only on these suitability points:
 Do not reject only because of gender, age, hairstyle, expression, or whether the target person already has visible makeup. Reject only when these factors make the face makeup regions unclear or blocked.
 
 The output prompt is fixed. If suitable, use exactly this prompt:
-Transfer the makeup style from the person in image 2 to the person in image 1, while keeping the person's identity, facial structure, pose, expression, hairstyle, clothing, and background unchanged.
+Transfer the facial makeup from the person in image 2 to the person in image 1, keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features.
 
 Return strict JSON only:
 {

@@ -27,6 +27,11 @@ from makeup_pairing import (
     write_outputs,
 )
 
+EXPECTED_MAKEUP_PROMPT = (
+    "Transfer the facial makeup from the person in image 2 to the person in image 1, "
+    "keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features."
+)
+
 
 def make_metadata(gender: str = "female", width: int = 1248, height: int = 832):
     return {
@@ -190,6 +195,7 @@ def test_compact_person_metadata_keeps_makeup_fields():
 
 
 def test_makeup_prompt_contains_confirmed_judgement_scope():
+    assert FIXED_MAKEUP_PROMPT == EXPECTED_MAKEUP_PROMPT
     prompt = MAKEUP_SYSTEM_PROMPT.lower()
 
     assert "key makeup regions" in prompt
