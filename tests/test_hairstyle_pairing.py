@@ -13,6 +13,7 @@ from hairstyle_pairing import (
     choose_balanced_ref,
     compact_person_metadata,
     format_summary,
+    is_valid_gen_metadata,
     is_valid_person_metadata,
     make_mock_accept_decision,
     parse_vlm_decision,
@@ -59,6 +60,48 @@ def test_valid_person_metadata_requires_visible_hair_and_clear_face():
                 "hair_visible": "yes",
                 "facial_features_clear": "yes",
                 "person_size_in_frame": "large",
+            }
+        },
+    }
+
+    assert is_valid_person_metadata(metadata) is True
+
+
+def test_valid_gen_metadata_requires_close_up_or_half_body_shot_type():
+    metadata = {
+        "resized_width": 1248,
+        "resized_height": 832,
+        "original_annotation": {
+            "annotation": {
+                "person_count": "1",
+                "head_visible": "yes",
+                "hair_visible": "yes",
+                "facial_features_clear": "yes",
+                "shot_type": "close_up",
+            }
+        },
+    }
+
+    assert is_valid_gen_metadata(metadata) is True
+
+    metadata["original_annotation"]["annotation"]["shot_type"] = "half_body"
+    assert is_valid_gen_metadata(metadata) is True
+
+    metadata["original_annotation"]["annotation"]["shot_type"] = "full_body"
+    assert is_valid_gen_metadata(metadata) is False
+
+
+def test_ref_metadata_does_not_apply_gen_shot_type_filter():
+    metadata = {
+        "resized_width": 1248,
+        "resized_height": 832,
+        "original_annotation": {
+            "annotation": {
+                "person_count": "1",
+                "head_visible": "yes",
+                "hair_visible": "yes",
+                "facial_features_clear": "yes",
+                "shot_type": "full_body",
             }
         },
     }
@@ -119,6 +162,7 @@ def test_build_valid_items_loads_hairstyle_metadata(tmp_path):
                     "head_visible": "yes",
                     "hair_visible": "yes",
                     "facial_features_clear": "yes",
+                    "shot_type": "half_body",
                 }
             },
         }),

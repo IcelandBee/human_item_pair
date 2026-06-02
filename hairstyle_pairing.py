@@ -23,6 +23,7 @@ from PIL import Image
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 MAX_PIXELS = 768 * 768
+ALLOWED_GEN_SHOT_TYPES = {"close_up", "half_body"}
 
 FIXED_HAIRSTYLE_PROMPT = (
     "Transfer the hair color and hairstyle from the person in the image 2 to the person in image 1, "
@@ -140,6 +141,14 @@ def is_valid_person_metadata(metadata: dict[str, Any]) -> bool:
     return True
 
 
+def is_valid_gen_metadata(metadata: dict[str, Any]) -> bool:
+    if not is_valid_person_metadata(metadata):
+        return False
+
+    ann = _annotation(metadata)
+    return ann.get("shot_type") in ALLOWED_GEN_SHOT_TYPES
+
+
 def _is_image_file(path: Path) -> bool:
     return path.suffix.lower() in IMG_EXTS
 
@@ -199,7 +208,8 @@ def build_valid_items(
             })
             continue
 
-        if not is_valid_person_metadata(metadata):
+        metadata_valid = is_valid_gen_metadata(metadata) if kind == "gen" else is_valid_person_metadata(metadata)
+        if not metadata_valid:
             audit.append({
                 "event": "metadata_prefilter_rejected",
                 "kind": kind,
