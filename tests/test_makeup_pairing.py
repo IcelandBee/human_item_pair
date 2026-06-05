@@ -215,6 +215,10 @@ def test_makeup_prompt_contains_confirmed_judgement_scope():
     assert "eye color of the person in image 1 unchanged" in prompt
     assert "colored eye contact lenses color" in prompt
     assert "iris_color_difference" in prompt
+    assert "at least one fully open eye" in prompt
+    assert "iris color can be reliably judged" in prompt
+    assert "squinting or half-closed" in prompt
+    assert "set that eye clarity field to false" in prompt
 
 
 def test_parse_and_accept_makeup_prompt_without_contact_lenses():
