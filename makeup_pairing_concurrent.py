@@ -9,7 +9,6 @@ from typing import Any
 from openai import OpenAI
 
 from makeup_pairing import (
-    FIXED_MAKEUP_PROMPT,
     ConsoleProgress,
     ImageItem,
     JudgePair,
@@ -220,7 +219,7 @@ def run_pairing(
                     result = {
                         "cond_1": str(gen_item.image_path),
                         "cond_2": str(ref_item.image_path),
-                        "prompt": FIXED_MAKEUP_PROMPT,
+                        "prompt": str(decision["prompt"]).strip(),
                     }
                     result.update(get_output_dimensions(gen_item))
                     results.append(result)

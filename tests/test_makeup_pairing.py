@@ -3,8 +3,9 @@ import random
 from pathlib import Path
 
 from makeup_pairing import (
-    FIXED_MAKEUP_PROMPT,
     MAKEUP_SYSTEM_PROMPT,
+    MAKEUP_PROMPT_WITH_CONTACT_LENSES,
+    MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES,
     ImageItem,
     PairingConfig,
     build_output_paths,
@@ -28,8 +29,15 @@ from makeup_pairing import (
 )
 
 EXPECTED_MAKEUP_PROMPT = (
-    "Transfer the facial makeup from the person in image 2 to the person in image 1, "
-    "keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features."
+    "Transfer the facial makeup: including the lips color, eyeliner, eyeshadow and facial foundation "
+    "from the person in image 2 to the person in image 1, keeping the rest unchanged. Ensure the makeup "
+    "is natural and matches the person's facial features. Keep the eye color of the person in image 1 "
+    "unchanged."
+)
+EXPECTED_MAKEUP_CONTACT_LENSES_PROMPT = (
+    "Transfer the facial makeup: including the lips color, eyeliner, eyeshadow, colored eye contact "
+    "lenses color and facial foundation from the person in image 2 to the person in image 1, keeping "
+    "the rest unchanged. Ensure the makeup is natural and matches the person's facial features."
 )
 
 
@@ -195,7 +203,8 @@ def test_compact_person_metadata_keeps_makeup_fields():
 
 
 def test_makeup_prompt_contains_confirmed_judgement_scope():
-    assert FIXED_MAKEUP_PROMPT == EXPECTED_MAKEUP_PROMPT
+    assert MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES == EXPECTED_MAKEUP_PROMPT
+    assert MAKEUP_PROMPT_WITH_CONTACT_LENSES == EXPECTED_MAKEUP_CONTACT_LENSES_PROMPT
     prompt = MAKEUP_SYSTEM_PROMPT.lower()
 
     assert "key makeup regions" in prompt
@@ -203,21 +212,55 @@ def test_makeup_prompt_contains_confirmed_judgement_scope():
     assert "face makeup regions" in prompt
     assert "masks, sunglasses, hands, hair, props" in prompt
     assert "strong shadow, blur, or overexposure" in prompt
+    assert "eye color of the person in image 1 unchanged" in prompt
+    assert "colored eye contact lenses color" in prompt
+    assert "iris_color_difference" in prompt
 
 
-def test_parse_and_accept_fixed_makeup_prompt():
+def test_parse_and_accept_makeup_prompt_without_contact_lenses():
     raw = f"""```json
 {{
   "suitable": true,
   "score": 0.86,
   "reason": "Both faces are clear and makeup regions are visible.",
-  "prompt": "{FIXED_MAKEUP_PROMPT}"
+  "gen_eyes_clear": false,
+  "ref_eyes_clear": true,
+  "iris_color_difference": "unclear",
+  "prompt": "{MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES}"
 }}
 ```"""
 
     decision = parse_vlm_decision(raw)
 
     assert should_accept_decision(decision, 0.75) is True
+
+
+def test_accepts_makeup_prompt_with_contact_lenses_when_iris_colors_differ():
+    decision = {
+        "suitable": True,
+        "score": 0.92,
+        "reason": "Both eyes are clear and iris colors differ.",
+        "gen_eyes_clear": True,
+        "ref_eyes_clear": True,
+        "iris_color_difference": "different",
+        "prompt": MAKEUP_PROMPT_WITH_CONTACT_LENSES,
+    }
+
+    assert should_accept_decision(decision, 0.75) is True
+
+
+def test_rejects_contact_lenses_prompt_when_eye_decision_is_inconsistent():
+    decision = {
+        "suitable": True,
+        "score": 0.92,
+        "reason": "Prompt conflicts with eye clarity judgement.",
+        "gen_eyes_clear": False,
+        "ref_eyes_clear": True,
+        "iris_color_difference": "different",
+        "prompt": MAKEUP_PROMPT_WITH_CONTACT_LENSES,
+    }
+
+    assert should_accept_decision(decision, 0.75) is False
 
 
 def test_rejects_non_makeup_prompt_format():
@@ -253,13 +296,16 @@ def test_run_pairing_outputs_fixed_prompt_dimensions_and_gender_ratio():
             "suitable": True,
             "score": 0.9,
             "reason": "mock accepted",
-            "prompt": FIXED_MAKEUP_PROMPT,
+            "gen_eyes_clear": True,
+            "ref_eyes_clear": True,
+            "iris_color_difference": "different",
+            "prompt": MAKEUP_PROMPT_WITH_CONTACT_LENSES,
         }
 
     results, audit = run_pairing(buckets, config, fake_judge)
 
     assert len(results) == 10
-    assert results[0]["prompt"] == FIXED_MAKEUP_PROMPT
+    assert results[0]["prompt"] == MAKEUP_PROMPT_WITH_CONTACT_LENSES
     assert results[0]["width"] == 624
     assert results[0]["height"] == 416
     assert len([row for row in audit if row["event"] == "pair_accepted" and row["gen_gender"] == "male"]) == 3
@@ -276,7 +322,7 @@ def test_output_paths_use_makeup_prefix():
 def test_mock_accept_decision_returns_fixed_prompt():
     decision = make_mock_accept_decision(make_item("g"), make_item("r"))
 
-    assert decision["prompt"] == FIXED_MAKEUP_PROMPT
+    assert decision["prompt"] == MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES
     assert should_accept_decision(decision, 0.75) is True
 
 
@@ -306,7 +352,7 @@ def test_write_outputs_writes_json_and_audit(tmp_path):
         results=[{
             "cond_1": "g.jpg",
             "cond_2": "r.jpg",
-            "prompt": FIXED_MAKEUP_PROMPT,
+            "prompt": MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES,
             "width": 624,
             "height": 416,
         }],
@@ -314,6 +360,6 @@ def test_write_outputs_writes_json_and_audit(tmp_path):
     )
 
     result = json.loads(output_json.read_text(encoding="utf-8"))[0]
-    assert result["prompt"] == FIXED_MAKEUP_PROMPT
+    assert result["prompt"] == MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES
     assert result["width"] == 624
     assert json.loads(audit_jsonl.read_text(encoding="utf-8").strip())["event"] == "pair_accepted"

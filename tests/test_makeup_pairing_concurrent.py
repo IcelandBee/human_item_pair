@@ -1,7 +1,7 @@
 import threading
 from pathlib import Path
 
-from makeup_pairing import FIXED_MAKEUP_PROMPT, ImageItem, PairingConfig, build_size_buckets
+from makeup_pairing import MAKEUP_PROMPT_WITH_CONTACT_LENSES, ImageItem, PairingConfig, build_size_buckets
 from makeup_pairing_concurrent import run_pairing
 
 
@@ -72,13 +72,16 @@ def test_run_pairing_keeps_workers_busy_and_stays_near_makeup_gender_ratio():
             "suitable": True,
             "score": 0.9,
             "reason": "mock accepted",
-            "prompt": FIXED_MAKEUP_PROMPT,
+            "gen_eyes_clear": True,
+            "ref_eyes_clear": True,
+            "iris_color_difference": "different",
+            "prompt": MAKEUP_PROMPT_WITH_CONTACT_LENSES,
         }
 
     results, audit = run_pairing(buckets, config, fake_judge)
 
     assert len(results) == 10
-    assert results[0]["prompt"] == FIXED_MAKEUP_PROMPT
+    assert results[0]["prompt"] == MAKEUP_PROMPT_WITH_CONTACT_LENSES
     assert results[0]["width"] == 624
     assert results[0]["height"] == 416
     assert len([row for row in audit if row["event"] == "pair_accepted" and row["gen_gender"] == "male"]) == 3

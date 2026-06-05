@@ -26,10 +26,18 @@ MAX_PIXELS = 768 * 768
 MALE_RATIO = 3
 FEMALE_RATIO = 7
 
-FIXED_MAKEUP_PROMPT = (
-    "Transfer the facial makeup from the person in image 2 to the person in image 1, "
-    "keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features."
+MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES = (
+    "Transfer the facial makeup: including the lips color, eyeliner, eyeshadow and facial foundation "
+    "from the person in image 2 to the person in image 1, keeping the rest unchanged. Ensure the makeup "
+    "is natural and matches the person's facial features. Keep the eye color of the person in image 1 "
+    "unchanged."
 )
+MAKEUP_PROMPT_WITH_CONTACT_LENSES = (
+    "Transfer the facial makeup: including the lips color, eyeliner, eyeshadow, colored eye contact "
+    "lenses color and facial foundation from the person in image 2 to the person in image 1, keeping "
+    "the rest unchanged. Ensure the makeup is natural and matches the person's facial features."
+)
+FIXED_MAKEUP_PROMPT = MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES
 
 MAKEUP_SYSTEM_PROMPT = """
 You are a strict data quality judge for makeup transfer image editing.
@@ -49,15 +57,23 @@ Focus only on these suitability points:
 
 Do not reject only because of gender, age, hairstyle, expression, or whether the target person already has visible makeup. Reject only when these factors make the face makeup regions unclear or blocked.
 
-The output prompt is fixed. If suitable, use exactly this prompt:
-Transfer the facial makeup from the person in image 2 to the person in image 1, keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features.
+After deciding suitability, choose exactly one output prompt. Eye clarity and iris color are prompt-selection signals only; do not reject a pair only because eye color cannot be compared.
+
+Use the no-contact-lenses prompt when either person's eyeballs/irises are not fully and clearly visible, or when the iris colors are the same, similar, or unclear:
+Transfer the facial makeup: including the lips color, eyeliner, eyeshadow and facial foundation from the person in image 2 to the person in image 1, keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features. Keep the eye color of the person in image 1 unchanged.
+
+Use the contact-lenses prompt only when both people's eyeballs/irises are fully and clearly visible and their iris colors are obviously different:
+Transfer the facial makeup: including the lips color, eyeliner, eyeshadow, colored eye contact lenses color and facial foundation from the person in image 2 to the person in image 1, keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features.
 
 Return strict JSON only:
 {
   "suitable": true or false,
   "score": a number from 0 to 1,
   "reason": "short reason",
-  "prompt": "the fixed prompt above if suitable, or empty string if unsuitable"
+  "gen_eyes_clear": true or false,
+  "ref_eyes_clear": true or false,
+  "iris_color_difference": "different, same_or_similar, or unclear",
+  "prompt": "one exact prompt above if suitable, or empty string if unsuitable"
 }
 """.strip()
 
@@ -330,7 +346,16 @@ def should_accept_decision(decision: dict[str, Any], score_threshold: float) -> 
         return False
     if float(score) < score_threshold:
         return False
-    return decision.get("prompt") == FIXED_MAKEUP_PROMPT
+    prompt = decision.get("prompt")
+    if prompt == MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES:
+        return True
+    if prompt != MAKEUP_PROMPT_WITH_CONTACT_LENSES:
+        return False
+    return (
+        decision.get("gen_eyes_clear") is True
+        and decision.get("ref_eyes_clear") is True
+        and str(decision.get("iris_color_difference", "")).strip().lower() == "different"
+    )
 
 
 def compact_person_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -626,7 +651,7 @@ def run_pairing(
                 result = {
                     "cond_1": str(gen_item.image_path),
                     "cond_2": str(ref_item.image_path),
-                    "prompt": FIXED_MAKEUP_PROMPT,
+                    "prompt": str(decision["prompt"]).strip(),
                 }
                 result.update(get_output_dimensions(gen_item))
                 results.append(result)
@@ -711,7 +736,10 @@ def make_mock_accept_decision(gen_item: ImageItem, ref_item: ImageItem) -> dict[
         "suitable": True,
         "score": 1.0,
         "reason": "dry-run accept-all mode",
-        "prompt": FIXED_MAKEUP_PROMPT,
+        "gen_eyes_clear": False,
+        "ref_eyes_clear": False,
+        "iris_color_difference": "unclear",
+        "prompt": MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES,
     }
 
 
