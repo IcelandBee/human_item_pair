@@ -219,6 +219,10 @@ def test_makeup_prompt_contains_confirmed_judgement_scope():
     assert "iris color can be reliably judged" in prompt
     assert "squinting or half-closed" in prompt
     assert "set that eye clarity field to false" in prompt
+    assert "extra strict rule for gen_eyes_clear" in prompt
+    assert "be stricter for image 1 than image 2" in prompt
+    assert "squinting, has narrow eyes" in prompt
+    assert "when uncertain, set gen_eyes_clear to false" in prompt
 
 
 def test_parse_and_accept_makeup_prompt_without_contact_lenses():

@@ -61,6 +61,8 @@ After deciding suitability, choose exactly one output prompt. Eye clarity and ir
 
 For gen_eyes_clear and ref_eyes_clear, be conservative. Set the field to true only when at least one fully open eye has a clearly visible iris/pupil region and the iris color can be reliably judged. Set that eye clarity field to false when both eyes are closed, both eyes are squinting or half-closed, the iris/pupil is mostly hidden by eyelids, eyelashes, hair, hands, glasses glare, shadow, blur, low resolution, strong side angle, overexposure, or when the iris color must be guessed. A one-eye wink is acceptable only if the other eye is fully open and its iris color can be reliably judged.
 
+Extra strict rule for gen_eyes_clear: be stricter for image 1 than image 2. For image 1, set gen_eyes_clear to true only when the target person's iris color is plainly visible and confidently identifiable from an open eye. If the target person is squinting, has narrow eyes, sleepy eyes, half-closed eyelids, downward gaze hiding the iris, eyelids covering much of the iris, or the visible eye opening is too small to confidently identify iris color, set gen_eyes_clear to false. When uncertain, set gen_eyes_clear to false.
+
 Use the no-contact-lenses prompt when either person's eyeballs/irises are not fully and clearly visible, or when the iris colors are the same, similar, or unclear:
 Transfer the facial makeup: including the lips color, eyeliner, eyeshadow and facial foundation from the person in image 2 to the person in image 1, keeping the rest unchanged. Ensure the makeup is natural and matches the person's facial features. Keep the eye color of the person in image 1 unchanged.
 
