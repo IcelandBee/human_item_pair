@@ -2,6 +2,8 @@ import json
 import random
 from pathlib import Path
 
+from PIL import Image
+
 from makeup_pairing import (
     MAKEUP_SYSTEM_PROMPT,
     MAKEUP_PROMPT_WITH_CONTACT_LENSES,
@@ -19,6 +21,7 @@ from makeup_pairing import (
     get_output_dimensions,
     is_valid_person_metadata,
     make_mock_accept_decision,
+    materialize_pair_outputs,
     parse_vlm_decision,
     render_progress_bar,
     resolve_size_key,
@@ -320,6 +323,124 @@ def test_run_pairing_outputs_fixed_prompt_dimensions_and_gender_ratio():
     assert len([row for row in audit if row["event"] == "pair_accepted" and row["gen_gender"] == "female"]) == 7
 
 
+def test_run_pairing_limits_bad_gen_attempts_per_pass_and_resets_next_pass(monkeypatch):
+    gen_items = [make_item("g_bad"), make_item("g_good")]
+    ref_items = [make_item(f"r{i}") for i in range(10)]
+    buckets = build_size_buckets(gen_items, ref_items)
+    monkeypatch.setattr(
+        "makeup_pairing._gender_balanced_gen_pass",
+        lambda gen_pool, _counts, _rng: sorted(gen_pool, key=lambda item: item.stem),
+    )
+    config = PairingConfig(
+        target_count=2,
+        batch_id="unit",
+        seed=0,
+        max_ref_attempts_per_gen=2,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=True,
+        max_gen_attempts_per_pass=3,
+    )
+    calls_by_gen = {"g_bad": 0, "g_good": 0}
+
+    def fake_judge(gen_item, _ref_item):
+        calls_by_gen[gen_item.stem] += 1
+        accepted = gen_item.stem == "g_good"
+        return {
+            "suitable": accepted,
+            "score": 0.9 if accepted else 0.1,
+            "reason": "mock accepted" if accepted else "mock rejected",
+            "gen_eyes_clear": True,
+            "ref_eyes_clear": True,
+            "iris_color_difference": "different",
+            "prompt": MAKEUP_PROMPT_WITH_CONTACT_LENSES if accepted else "",
+        }
+
+    results, audit = run_pairing(buckets, config, fake_judge)
+
+    assert len(results) == 2
+    assert calls_by_gen == {"g_bad": 5, "g_good": 2}
+    limit_events = [row for row in audit if row["event"] == "gen_pass_attempt_limit_reached"]
+    assert len(limit_events) == 1
+    assert limit_events[0]["attempted_count"] == 3
+    assert limit_events[0]["max_gen_attempts_per_pass"] == 3
+
+
+def test_run_pairing_does_not_cap_successful_gen_reuse_across_passes():
+    gen_items = [make_item("g_good")]
+    ref_items = [make_item("r1")]
+    buckets = build_size_buckets(gen_items, ref_items)
+    config = PairingConfig(
+        target_count=4,
+        batch_id="unit",
+        seed=123,
+        max_ref_attempts_per_gen=1,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=True,
+        max_gen_attempts_per_pass=1,
+    )
+    calls = 0
+
+    def fake_judge(_gen_item, _ref_item):
+        nonlocal calls
+        calls += 1
+        return {
+            "suitable": True,
+            "score": 0.9,
+            "reason": "mock accepted",
+            "gen_eyes_clear": True,
+            "ref_eyes_clear": True,
+            "iris_color_difference": "different",
+            "prompt": MAKEUP_PROMPT_WITH_CONTACT_LENSES,
+        }
+
+    results, audit = run_pairing(buckets, config, fake_judge)
+
+    assert len(results) == 4
+    assert calls == 4
+    assert not [row for row in audit if row["event"] == "gen_pass_attempt_limit_reached"]
+
+
+def test_run_pairing_allows_only_one_pair_per_gen_per_pass(monkeypatch):
+    gen_items = [make_item("g1")]
+    ref_items = [make_item("r1"), make_item("r2")]
+    buckets = build_size_buckets(gen_items, ref_items)
+    monkeypatch.setattr(
+        "makeup_pairing._gender_balanced_gen_pass",
+        lambda gen_pool, _counts, _rng: list(gen_pool),
+    )
+    config = PairingConfig(
+        target_count=2,
+        batch_id="unit",
+        seed=123,
+        max_ref_attempts_per_gen=2,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=True,
+        max_gen_attempts_per_pass=2,
+    )
+    pass_ref_sequence = []
+
+    def fake_judge(_gen_item, ref_item):
+        pass_ref_sequence.append(ref_item.stem)
+        return {
+            "suitable": True,
+            "score": 0.9,
+            "reason": "mock accepted",
+            "gen_eyes_clear": True,
+            "ref_eyes_clear": True,
+            "iris_color_difference": "different",
+            "prompt": MAKEUP_PROMPT_WITH_CONTACT_LENSES,
+        }
+
+    results, audit = run_pairing(buckets, config, fake_judge)
+
+    assert len(results) == 2
+    assert len(pass_ref_sequence) == 2
+    assert len([row for row in audit if row["event"] == "pair_accepted"]) == 2
+
+
 def test_output_paths_use_makeup_prefix():
     output_json, audit_jsonl = build_output_paths(Path("output"), "exp_v1")
 
@@ -371,3 +492,57 @@ def test_write_outputs_writes_json_and_audit(tmp_path):
     assert result["prompt"] == MAKEUP_PROMPT_WITHOUT_CONTACT_LENSES
     assert result["width"] == 624
     assert json.loads(audit_jsonl.read_text(encoding="utf-8").strip())["event"] == "pair_accepted"
+
+
+def test_materialize_pair_outputs_copies_pairs_as_ordered_pngs_and_writes_training_json(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    gen_0 = source_dir / "gen0.jpg"
+    ref_0 = source_dir / "ref0.webp"
+    gen_1 = source_dir / "gen1.png"
+    ref_1 = source_dir / "ref1.jpg"
+    Image.new("RGB", (17, 19), (255, 0, 0)).save(gen_0)
+    Image.new("RGB", (11, 13), (0, 255, 0)).save(ref_0)
+    Image.new("RGB", (23, 29), (0, 0, 255)).save(gen_1)
+    Image.new("RGB", (31, 37), (255, 255, 0)).save(ref_1)
+    materialized_dir = tmp_path / "materialized"
+
+    output_json = materialize_pair_outputs(
+        results=[
+            {"cond_1": str(gen_0), "cond_2": str(ref_0), "prompt": "makeup 0"},
+            {"cond_1": str(gen_1), "cond_2": str(ref_1), "prompt": "makeup 1"},
+        ],
+        output_root=materialized_dir,
+        batch_id="unit",
+    )
+
+    copied_gen_0 = materialized_dir / "gen" / "00000.png"
+    copied_ref_0 = materialized_dir / "ref" / "00000.png"
+    copied_gen_1 = materialized_dir / "gen" / "00001.png"
+    copied_ref_1 = materialized_dir / "ref" / "00001.png"
+    assert output_json == materialized_dir / "makeup_unit.json"
+    assert copied_gen_0.exists()
+    assert copied_ref_0.exists()
+    assert copied_gen_1.exists()
+    assert copied_ref_1.exists()
+    assert Image.open(copied_gen_0).size == (17, 19)
+    assert Image.open(copied_gen_1).size == (23, 29)
+    rows = json.loads(output_json.read_text(encoding="utf-8"))
+    assert rows == [
+        {
+            "file_name": str(materialized_dir / "tgt" / "00000.png"),
+            "cond_1": str(copied_gen_0),
+            "cond_2": str(copied_ref_0),
+            "prompt": "makeup 0",
+            "width": 17,
+            "height": 19,
+        },
+        {
+            "file_name": str(materialized_dir / "tgt" / "00001.png"),
+            "cond_1": str(copied_gen_1),
+            "cond_2": str(copied_ref_1),
+            "prompt": "makeup 1",
+            "width": 23,
+            "height": 29,
+        },
+    ]
