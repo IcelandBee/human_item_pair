@@ -2,6 +2,8 @@ import json
 import random
 from pathlib import Path
 
+import expression_pairing as expression_pairing_module
+from PIL import Image
 from expression_pairing import (
     EXPRESSION_SYSTEM_PROMPT,
     FIXED_EXPRESSION_PROMPT,
@@ -19,6 +21,7 @@ from expression_pairing import (
     is_valid_gen_metadata,
     is_valid_ref_metadata,
     make_mock_accept_decision,
+    materialize_pair_outputs,
     parse_vlm_decision,
     render_progress_bar,
     resolve_size_key,
@@ -363,6 +366,7 @@ def test_run_pairing_is_ref_driven_and_limits_smile_big_laugh_distribution():
         batch_id="unit",
         seed=123,
         max_ref_attempts_per_gen=3,
+        max_ref_attempts_per_pass=30,
         score_threshold=0.75,
         workers=1,
         allow_gen_reuse=False,
@@ -390,6 +394,134 @@ def test_run_pairing_is_ref_driven_and_limits_smile_big_laugh_distribution():
     assert accepted_expressions.count("smile") <= 1
     assert accepted_expressions.count("big_laugh") <= 1
     assert sum(expr not in {"smile", "big_laugh"} for expr in accepted_expressions) >= 3
+
+
+def test_run_pairing_limits_bad_ref_attempts_per_pass_and_resets_next_pass(monkeypatch):
+    gen_items = [make_item(f"g{i}") for i in range(10)]
+    ref_items = [
+        make_item("r_bad", metadata=make_metadata("angry")),
+        make_item("r_good", metadata=make_metadata("sad")),
+    ]
+    buckets = build_size_buckets(gen_items, ref_items)
+    monkeypatch.setattr(
+        expression_pairing_module,
+        "choose_next_ref",
+        lambda refs_by_expression, accepted_by_expression, ref_usage_count, blocked_ref_stems, rng, max_smile_ratio=1.0, max_big_laugh_ratio=1.0: (
+            next(
+                (
+                    ref
+                    for ref in sorted(
+                        [item for refs in refs_by_expression.values() for item in refs],
+                        key=lambda item: item.stem,
+                    )
+                    if ref.stem not in blocked_ref_stems
+                ),
+                None,
+            )
+        ),
+    )
+    config = PairingConfig(
+        target_count=2,
+        batch_id="unit",
+        seed=0,
+        max_ref_attempts_per_gen=2,
+        max_ref_attempts_per_pass=3,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=True,
+    )
+    calls_by_ref = {"r_bad": 0, "r_good": 0}
+
+    def fake_judge(_gen_item, ref_item):
+        calls_by_ref[ref_item.stem] += 1
+        accepted = ref_item.stem == "r_good"
+        return {
+            "suitable": accepted,
+            "score": 0.9 if accepted else 0.1,
+            "reason": "mock accepted" if accepted else "mock rejected",
+            "prompt": FIXED_EXPRESSION_PROMPT if accepted else "",
+        }
+
+    results, audit = run_pairing(buckets, config, fake_judge)
+
+    assert len(results) == 2
+    assert calls_by_ref == {"r_bad": 6, "r_good": 2}
+    limit_events = [row for row in audit if row["event"] == "ref_pass_attempt_limit_reached"]
+    assert len(limit_events) == 2
+    assert {row["attempted_count"] for row in limit_events} == {3}
+    assert {row["max_ref_attempts_per_pass"] for row in limit_events} == {3}
+
+
+def test_run_pairing_does_not_cap_successful_ref_reuse_across_passes():
+    gen_items = [make_item("g1")]
+    ref_items = [make_item("r_good", metadata=make_metadata("sad"))]
+    buckets = build_size_buckets(gen_items, ref_items)
+    config = PairingConfig(
+        target_count=4,
+        batch_id="unit",
+        seed=123,
+        max_ref_attempts_per_gen=1,
+        max_ref_attempts_per_pass=1,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=True,
+    )
+    calls = 0
+
+    def fake_judge(_gen_item, _ref_item):
+        nonlocal calls
+        calls += 1
+        return {
+            "suitable": True,
+            "score": 0.9,
+            "reason": "mock accepted",
+            "prompt": FIXED_EXPRESSION_PROMPT,
+        }
+
+    results, audit = run_pairing(buckets, config, fake_judge)
+
+    assert len(results) == 4
+    assert calls == 4
+    assert not [row for row in audit if row["event"] == "ref_pass_attempt_limit_reached"]
+
+
+def test_run_pairing_allows_only_one_pair_per_ref_per_pass(monkeypatch):
+    gen_items = [make_item("g1"), make_item("g2")]
+    ref_items = [make_item("r_good", metadata=make_metadata("sad"))]
+    buckets = build_size_buckets(gen_items, ref_items)
+    monkeypatch.setattr(
+        expression_pairing_module,
+        "choose_next_ref",
+        lambda refs_by_expression, accepted_by_expression, ref_usage_count, blocked_ref_stems, rng, max_smile_ratio=1.0, max_big_laugh_ratio=1.0: (
+            None if "r_good" in blocked_ref_stems else refs_by_expression["sad"][0]
+        ),
+    )
+    config = PairingConfig(
+        target_count=2,
+        batch_id="unit",
+        seed=123,
+        max_ref_attempts_per_gen=2,
+        max_ref_attempts_per_pass=30,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=True,
+    )
+    calls = []
+
+    def fake_judge(gen_item, ref_item):
+        calls.append((gen_item.stem, ref_item.stem))
+        return {
+            "suitable": True,
+            "score": 0.9,
+            "reason": "mock accepted",
+            "prompt": FIXED_EXPRESSION_PROMPT,
+        }
+
+    results, _audit = run_pairing(buckets, config, fake_judge)
+
+    assert len(results) == 2
+    assert len(calls) == 2
+    assert calls[0][1] == calls[1][1] == "r_good"
 
 
 def test_output_paths_use_expression_prefix():
@@ -445,3 +577,57 @@ def test_write_outputs_writes_json_and_audit(tmp_path):
     assert result["prompt"] == FIXED_EXPRESSION_PROMPT
     assert result["width"] == 624
     assert json.loads(audit_jsonl.read_text(encoding="utf-8").strip())["event"] == "pair_accepted"
+
+
+def test_materialize_pair_outputs_copies_pairs_as_ordered_pngs_and_writes_training_json(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    gen_path_0 = source_dir / "person0.jpg"
+    ref_path_0 = source_dir / "expr0.webp"
+    gen_path_1 = source_dir / "person1.png"
+    ref_path_1 = source_dir / "expr1.jpg"
+    Image.new("RGB", (17, 19), (255, 0, 0)).save(gen_path_0)
+    Image.new("RGB", (11, 13), (0, 255, 0)).save(ref_path_0)
+    Image.new("RGB", (23, 29), (0, 0, 255)).save(gen_path_1)
+    Image.new("RGB", (7, 9), (255, 255, 0)).save(ref_path_1)
+    materialized_dir = tmp_path / "materialized"
+
+    output_json = materialize_pair_outputs(
+        results=[
+            {"cond_1": str(gen_path_0), "cond_2": str(ref_path_0), "prompt": "expression prompt 0"},
+            {"cond_1": str(gen_path_1), "cond_2": str(ref_path_1), "prompt": "expression prompt 1"},
+        ],
+        output_root=materialized_dir,
+        batch_id="unit",
+    )
+
+    copied_gen_0 = materialized_dir / "gen" / "00000.png"
+    copied_ref_0 = materialized_dir / "ref" / "00000.png"
+    copied_gen_1 = materialized_dir / "gen" / "00001.png"
+    copied_ref_1 = materialized_dir / "ref" / "00001.png"
+    assert output_json == materialized_dir / "expression_unit.json"
+    assert copied_gen_0.exists()
+    assert copied_ref_0.exists()
+    assert copied_gen_1.exists()
+    assert copied_ref_1.exists()
+    assert Image.open(copied_gen_0).size == (17, 19)
+    assert Image.open(copied_gen_1).size == (23, 29)
+    rows = json.loads(output_json.read_text(encoding="utf-8"))
+    assert rows == [
+        {
+            "file_name": str(materialized_dir / "tgt" / "00000.png"),
+            "cond_1": str(copied_gen_0),
+            "cond_2": str(copied_ref_0),
+            "prompt": "expression prompt 0",
+            "width": 17,
+            "height": 19,
+        },
+        {
+            "file_name": str(materialized_dir / "tgt" / "00001.png"),
+            "cond_1": str(copied_gen_1),
+            "cond_2": str(copied_ref_1),
+            "prompt": "expression prompt 1",
+            "width": 23,
+            "height": 29,
+        },
+    ]
