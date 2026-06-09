@@ -83,6 +83,7 @@ class PairingConfig:
     score_threshold: float
     workers: int
     allow_gen_reuse: bool
+    max_gen_attempts_per_pass: int = 30
 
 
 JudgePair = Callable[[ImageItem, ImageItem], dict[str, Any]]
@@ -514,91 +515,143 @@ def run_pairing(
     while len(results) < config.target_count:
         gen_pass = shuffled_gen_pass(gen_pool, rng)
         accepted_in_pass = 0
+        pass_attempt_count_by_gen: dict[str, int] = defaultdict(int)
+        pass_attempted_ref_stems_by_gen: dict[str, set[str]] = defaultdict(set)
+        accepted_gen_stems_in_pass: set[str] = set()
+        limit_logged_gen_stems: set[str] = set()
 
-        for gen_item in gen_pass:
-            if len(results) >= config.target_count:
-                break
-            if not config.allow_gen_reuse and gen_item.stem in processed_unique_gen:
-                continue
-            processed_unique_gen.add(gen_item.stem)
+        while len(results) < config.target_count:
+            progressed_in_cycle = False
 
-            refs = buckets[gen_item.size_key]["ref"]
-            attempted_ref_stems: set[str] = set()
-            accepted_for_gen = False
-
-            for attempt_index in range(1, config.max_ref_attempts_per_gen + 1):
-                ref_item = choose_balanced_ref(
-                    refs=refs,
-                    ref_usage_count=ref_usage_by_size[gen_item.size_key],
-                    attempted_ref_stems=attempted_ref_stems,
-                    rng=rng,
-                )
-                if ref_item is None:
-                    audit.append({
-                        "event": "no_ref_candidates_left",
-                        "batch_id": config.batch_id,
-                        "seed": config.seed,
-                        "size_key": gen_item.size_key,
-                        "gen_path": str(gen_item.image_path),
-                    })
+            for gen_item in gen_pass:
+                if len(results) >= config.target_count:
                     break
+                if gen_item.stem in accepted_gen_stems_in_pass:
+                    continue
+                if not config.allow_gen_reuse and gen_item.stem in processed_unique_gen:
+                    continue
 
-                attempted_ref_stems.add(ref_item.stem)
-                try:
-                    decision = judge_pair(gen_item, ref_item)
-                    accepted = should_accept_decision(decision, config.score_threshold)
-                except Exception as exc:
+                refs = buckets[gen_item.size_key]["ref"]
+                pass_attempted_ref_stems = pass_attempted_ref_stems_by_gen[gen_item.stem]
+                remaining_pass_attempts = (
+                    config.max_gen_attempts_per_pass - pass_attempt_count_by_gen[gen_item.stem]
+                )
+                if remaining_pass_attempts <= 0:
+                    if gen_item.stem not in limit_logged_gen_stems:
+                        audit.append({
+                            "event": "gen_pass_attempt_limit_reached",
+                            "batch_id": config.batch_id,
+                            "seed": config.seed,
+                            "size_key": gen_item.size_key,
+                            "gen_path": str(gen_item.image_path),
+                            "attempted_count": pass_attempt_count_by_gen[gen_item.stem],
+                            "max_gen_attempts_per_pass": config.max_gen_attempts_per_pass,
+                        })
+                        limit_logged_gen_stems.add(gen_item.stem)
+                    continue
+                if len(pass_attempted_ref_stems) >= len(refs):
+                    continue
+
+                processed_unique_gen.add(gen_item.stem)
+                attempted_ref_stems: set[str] = set()
+                accepted_for_gen = False
+                attempts_allowed = min(config.max_ref_attempts_per_gen, remaining_pass_attempts)
+
+                for _ in range(attempts_allowed):
+                    ref_item = choose_balanced_ref(
+                        refs=refs,
+                        ref_usage_count=ref_usage_by_size[gen_item.size_key],
+                        attempted_ref_stems=pass_attempted_ref_stems,
+                        rng=rng,
+                    )
+                    if ref_item is None:
+                        audit.append({
+                            "event": "no_ref_candidates_left",
+                            "batch_id": config.batch_id,
+                            "seed": config.seed,
+                            "size_key": gen_item.size_key,
+                            "gen_path": str(gen_item.image_path),
+                        })
+                        break
+
+                    pass_attempted_ref_stems.add(ref_item.stem)
+                    attempted_ref_stems.add(ref_item.stem)
+                    pass_attempt_count_by_gen[gen_item.stem] += 1
+                    try:
+                        decision = judge_pair(gen_item, ref_item)
+                        accepted = should_accept_decision(decision, config.score_threshold)
+                    except Exception as exc:
+                        audit.append({
+                            "event": "pair_error",
+                            "batch_id": config.batch_id,
+                            "seed": config.seed,
+                            "size_key": gen_item.size_key,
+                            "gen_path": str(gen_item.image_path),
+                            "ref_path": str(ref_item.image_path),
+                            "attempt_index_for_gen": pass_attempt_count_by_gen[gen_item.stem],
+                            "error": repr(exc),
+                        })
+                        continue
+
                     audit.append({
-                        "event": "pair_error",
+                        "event": "pair_accepted" if accepted else "pair_rejected",
                         "batch_id": config.batch_id,
                         "seed": config.seed,
                         "size_key": gen_item.size_key,
                         "gen_path": str(gen_item.image_path),
                         "ref_path": str(ref_item.image_path),
-                        "attempt_index_for_gen": attempt_index,
-                        "error": repr(exc),
+                        "attempt_index_for_gen": pass_attempt_count_by_gen[gen_item.stem],
+                        "suitable": decision.get("suitable"),
+                        "score": decision.get("score"),
+                        "reason": decision.get("reason"),
+                        "hairstyle_difference": decision.get("hairstyle_difference", ""),
+                        "prompt": decision.get("prompt", ""),
                     })
-                    continue
 
-                audit.append({
-                    "event": "pair_accepted" if accepted else "pair_rejected",
-                    "batch_id": config.batch_id,
-                    "seed": config.seed,
-                    "size_key": gen_item.size_key,
-                    "gen_path": str(gen_item.image_path),
-                    "ref_path": str(ref_item.image_path),
-                    "attempt_index_for_gen": attempt_index,
-                    "suitable": decision.get("suitable"),
-                    "score": decision.get("score"),
-                    "reason": decision.get("reason"),
-                    "hairstyle_difference": decision.get("hairstyle_difference", ""),
-                    "prompt": decision.get("prompt", ""),
-                })
+                    if accepted:
+                        ref_usage_by_size[gen_item.size_key][ref_item.stem] += 1
+                        results.append({
+                            "cond_1": str(gen_item.image_path),
+                            "cond_2": str(ref_item.image_path),
+                            "prompt": FIXED_HAIRSTYLE_PROMPT,
+                        })
+                        accepted_for_gen = True
+                        accepted_gen_stems_in_pass.add(gen_item.stem)
+                        accepted_in_pass += 1
+                        break
 
-                if accepted:
-                    ref_usage_by_size[gen_item.size_key][ref_item.stem] += 1
-                    results.append({
-                        "cond_1": str(gen_item.image_path),
-                        "cond_2": str(ref_item.image_path),
-                        "prompt": FIXED_HAIRSTYLE_PROMPT,
-                    })
-                    accepted_for_gen = True
-                    accepted_in_pass += 1
-                    break
+                if attempted_ref_stems:
+                    progressed_in_cycle = True
+                    if not accepted_for_gen:
+                        audit.append({
+                            "event": "gen_skipped_after_attempts",
+                            "batch_id": config.batch_id,
+                            "seed": config.seed,
+                            "size_key": gen_item.size_key,
+                            "gen_path": str(gen_item.image_path),
+                            "attempted_count": len(attempted_ref_stems),
+                        })
+                        if (
+                            pass_attempt_count_by_gen[gen_item.stem] >= config.max_gen_attempts_per_pass
+                            and gen_item.stem not in limit_logged_gen_stems
+                        ):
+                            audit.append({
+                                "event": "gen_pass_attempt_limit_reached",
+                                "batch_id": config.batch_id,
+                                "seed": config.seed,
+                                "size_key": gen_item.size_key,
+                                "gen_path": str(gen_item.image_path),
+                                "attempted_count": pass_attempt_count_by_gen[gen_item.stem],
+                                "max_gen_attempts_per_pass": config.max_gen_attempts_per_pass,
+                            })
+                            limit_logged_gen_stems.add(gen_item.stem)
 
-            if not accepted_for_gen:
-                audit.append({
-                    "event": "gen_skipped_after_attempts",
-                    "batch_id": config.batch_id,
-                    "seed": config.seed,
-                    "size_key": gen_item.size_key,
-                    "gen_path": str(gen_item.image_path),
-                    "attempted_count": len(attempted_ref_stems),
-                })
+                    processed_gen += 1
+                    attempts += len(attempted_ref_stems)
+                    report_progress()
 
-            processed_gen += 1
-            attempts += len(attempted_ref_stems)
-            report_progress()
+            if not progressed_in_cycle:
+                break
 
         if len(results) >= config.target_count:
             break
@@ -632,6 +685,48 @@ def write_outputs(
     with audit_jsonl_path.open("w", encoding="utf-8") as f:
         for row in audit:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def materialize_pair_outputs(
+    results: list[dict[str, Any]],
+    output_root: Path,
+    batch_id: str,
+) -> Path:
+    gen_dir = output_root / "gen"
+    ref_dir = output_root / "ref"
+    gen_dir.mkdir(parents=True, exist_ok=True)
+    ref_dir.mkdir(parents=True, exist_ok=True)
+
+    rows: list[dict[str, Any]] = []
+    for index, result in enumerate(results):
+        stem = f"{index:05d}"
+        gen_output_path = gen_dir / f"{stem}.png"
+        ref_output_path = ref_dir / f"{stem}.png"
+        gen_source_path = Path(result["cond_1"])
+        ref_source_path = Path(result["cond_2"])
+
+        with Image.open(gen_source_path) as gen_image:
+            gen_rgb = gen_image.convert("RGB")
+            width, height = gen_rgb.size
+            gen_rgb.save(gen_output_path, format="PNG")
+        with Image.open(ref_source_path) as ref_image:
+            ref_image.convert("RGB").save(ref_output_path, format="PNG")
+
+        rows.append({
+            "file_name": str(output_root / "tgt" / f"{stem}.png"),
+            "cond_1": str(gen_output_path),
+            "cond_2": str(ref_output_path),
+            "prompt": result["prompt"],
+            "width": width,
+            "height": height,
+        })
+
+    output_json_path = output_root / f"makeup_{batch_id}.json"
+    output_json_path.write_text(
+        json.dumps(rows, ensure_ascii=False, indent=4),
+        encoding="utf-8",
+    )
+    return output_json_path
 
 
 def format_summary(
@@ -686,9 +781,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-id", type=str, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--max-ref-attempts-per-gen", type=int, default=5)
+    parser.add_argument("--max-gen-attempts-per-pass", type=int, default=30)
     parser.add_argument("--score-threshold", type=float, default=0.75)
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--allow-gen-reuse", action="store_true")
+    parser.add_argument("--materialized-output-dir", type=Path, default=None)
     parser.add_argument("--base-url", type=str, default=None)
     parser.add_argument("--api-key", type=str, default=None)
     parser.add_argument("--model-name", type=str, default=None)
@@ -731,6 +828,7 @@ def main() -> None:
         score_threshold=args.score_threshold,
         workers=args.workers,
         allow_gen_reuse=args.allow_gen_reuse,
+        max_gen_attempts_per_pass=args.max_gen_attempts_per_pass,
     )
 
     progress.stage("prepare-data")
@@ -771,6 +869,12 @@ def main() -> None:
     progress.stage("write-output")
     output_json_path, audit_jsonl_path = build_output_paths(args.output_dir, batch_id)
     write_outputs(output_json_path, audit_jsonl_path, results, audit)
+    if args.materialized_output_dir is not None:
+        materialize_pair_outputs(
+            results=results,
+            output_root=args.materialized_output_dir,
+            batch_id=batch_id,
+        )
 
     progress.stage("done")
     progress.stream.write(format_summary(
