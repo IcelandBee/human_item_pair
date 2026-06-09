@@ -12,6 +12,7 @@ import sys
 import time
 from collections import defaultdict
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -285,7 +286,10 @@ def build_size_buckets(
     }
 
 
-def shuffled_gen_pass(gen_items: list[ImageItem], rng: random.Random) -> list[ImageItem]:
+def shuffled_gen_pass(
+    gen_items: list[ImageItem],
+    rng: random.Random,
+) -> list[ImageItem]:
     result = list(gen_items)
     rng.shuffle(result)
     return result
@@ -322,13 +326,17 @@ def _strip_markdown_fence(text: str) -> str:
 
 
 def parse_vlm_decision(raw_text: str) -> dict[str, Any]:
-    data = json.loads(_strip_markdown_fence(raw_text))
+    cleaned = _strip_markdown_fence(raw_text)
+    data = json.loads(cleaned)
     if not isinstance(data, dict):
         raise ValueError("VLM response must be a JSON object")
     return data
 
 
-def should_accept_decision(decision: dict[str, Any], score_threshold: float) -> bool:
+def should_accept_decision(
+    decision: dict[str, Any],
+    score_threshold: float,
+) -> bool:
     if decision.get("suitable") is not True:
         return False
     score = decision.get("score")
@@ -503,7 +511,7 @@ class ConsoleProgress:
 
     def pairing(self, snapshot: dict[str, int]) -> None:
         line = render_progress_bar(
-            stage="pairing",
+            stage="配对判断",
             accepted=snapshot["accepted"],
             target=snapshot["target"],
             processed_gen=snapshot["processed_gen"],
@@ -534,7 +542,15 @@ class ConsoleProgress:
             self._last_line_length = 0
 
 
-def run_pairing(
+@dataclass
+class _PairAttempt:
+    gen_item: ImageItem
+    ref_item: ImageItem
+    chunk_attempt_index: int
+    attempted_ref_stems_in_chunk: set[str]
+
+
+def _run_pairing_single_worker(
     buckets: dict[str, dict[str, list[ImageItem]]],
     config: PairingConfig,
     judge_pair: JudgePair,
@@ -607,7 +623,7 @@ def run_pairing(
                 accepted_for_gen = False
                 attempts_allowed = min(config.max_ref_attempts_per_gen, remaining_pass_attempts)
 
-                for _ in range(1, attempts_allowed + 1):
+                for attempt_index in range(1, attempts_allowed + 1):
                     ref_item = choose_balanced_ref(
                         refs=refs,
                         ref_usage_count=ref_usage_by_size[gen_item.size_key],
@@ -712,6 +728,256 @@ def run_pairing(
             break
 
     return results, audit
+
+
+def run_pairing(
+    buckets: dict[str, dict[str, list[ImageItem]]],
+    config: PairingConfig,
+    judge_pair: JudgePair,
+    progress_callback: ProgressCallback | None = None,
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    if config.workers <= 1:
+        return _run_pairing_single_worker(
+            buckets=buckets,
+            config=config,
+            judge_pair=judge_pair,
+            progress_callback=progress_callback,
+        )
+
+    rng = random.Random(config.seed)
+    ref_usage_by_size: dict[str, dict[str, int]] = {
+        size_key: {ref.stem: 0 for ref in bucket["ref"]}
+        for size_key, bucket in buckets.items()
+    }
+    results: list[dict[str, str]] = []
+    audit: list[dict[str, Any]] = []
+    gen_pool = _all_gen_items_from_buckets(buckets)
+    processed_unique_gen: set[str] = set()
+    processed_gen = 0
+    attempts = 0
+
+    def report_progress() -> None:
+        if progress_callback is None:
+            return
+        progress_callback({
+            "accepted": len(results),
+            "target": config.target_count,
+            "processed_gen": processed_gen,
+            "attempts": attempts,
+        })
+
+    def append_limit_event(
+        gen_item: ImageItem,
+        pass_attempt_count_by_gen: dict[str, int],
+        limit_logged_gen_stems: set[str],
+    ) -> None:
+        if gen_item.stem in limit_logged_gen_stems:
+            return
+        audit.append({
+            "event": "gen_pass_attempt_limit_reached",
+            "batch_id": config.batch_id,
+            "seed": config.seed,
+            "size_key": gen_item.size_key,
+            "gen_path": str(gen_item.image_path),
+            "attempted_count": pass_attempt_count_by_gen[gen_item.stem],
+            "max_gen_attempts_per_pass": config.max_gen_attempts_per_pass,
+        })
+        limit_logged_gen_stems.add(gen_item.stem)
+
+    def append_skip_event(gen_item: ImageItem, attempted_count: int) -> None:
+        audit.append({
+            "event": "gen_skipped_after_attempts",
+            "batch_id": config.batch_id,
+            "seed": config.seed,
+            "size_key": gen_item.size_key,
+            "gen_path": str(gen_item.image_path),
+            "attempted_count": attempted_count,
+        })
+
+    def append_no_ref_event(gen_item: ImageItem) -> None:
+        audit.append({
+            "event": "no_ref_candidates_left",
+            "batch_id": config.batch_id,
+            "seed": config.seed,
+            "size_key": gen_item.size_key,
+            "gen_path": str(gen_item.image_path),
+        })
+
+    with ThreadPoolExecutor(max_workers=config.workers) as executor:
+        while len(results) < config.target_count:
+            gen_pass = shuffled_gen_pass(gen_pool, rng)
+            accepted_in_pass = 0
+            pass_attempt_count_by_gen: dict[str, int] = defaultdict(int)
+            pass_attempted_ref_stems_by_gen: dict[str, set[str]] = defaultdict(set)
+            accepted_gen_stems_in_pass: set[str] = set()
+            active_gen_stems: set[str] = set()
+            limit_logged_gen_stems: set[str] = set()
+            no_ref_logged_gen_stems: set[str] = set()
+            active: dict[Future[dict[str, Any]], _PairAttempt] = {}
+
+            def can_submit(gen_item: ImageItem) -> bool:
+                if len(results) >= config.target_count:
+                    return False
+                if gen_item.stem in active_gen_stems:
+                    return False
+                if gen_item.stem in accepted_gen_stems_in_pass:
+                    return False
+                if not config.allow_gen_reuse and gen_item.stem in processed_unique_gen:
+                    return False
+                refs = buckets[gen_item.size_key]["ref"]
+                attempted_refs = pass_attempted_ref_stems_by_gen[gen_item.stem]
+                if len(attempted_refs) >= len(refs):
+                    if gen_item.stem not in no_ref_logged_gen_stems:
+                        append_no_ref_event(gen_item)
+                        no_ref_logged_gen_stems.add(gen_item.stem)
+                    return False
+                if pass_attempt_count_by_gen[gen_item.stem] >= config.max_gen_attempts_per_pass:
+                    append_limit_event(gen_item, pass_attempt_count_by_gen, limit_logged_gen_stems)
+                    return False
+                return True
+
+            def submit_attempt(
+                gen_item: ImageItem,
+                attempted_ref_stems_in_chunk: set[str] | None = None,
+                chunk_attempt_index: int = 1,
+            ) -> bool:
+                refs = buckets[gen_item.size_key]["ref"]
+                pass_attempted_refs = pass_attempted_ref_stems_by_gen[gen_item.stem]
+                if pass_attempt_count_by_gen[gen_item.stem] >= config.max_gen_attempts_per_pass:
+                    append_limit_event(gen_item, pass_attempt_count_by_gen, limit_logged_gen_stems)
+                    return False
+                ref_item = choose_balanced_ref(
+                    refs=refs,
+                    ref_usage_count=ref_usage_by_size[gen_item.size_key],
+                    attempted_ref_stems=pass_attempted_refs,
+                    rng=rng,
+                )
+                if ref_item is None:
+                    if gen_item.stem not in no_ref_logged_gen_stems:
+                        append_no_ref_event(gen_item)
+                        no_ref_logged_gen_stems.add(gen_item.stem)
+                    return False
+
+                processed_unique_gen.add(gen_item.stem)
+                pass_attempted_refs.add(ref_item.stem)
+                pass_attempt_count_by_gen[gen_item.stem] += 1
+                active_gen_stems.add(gen_item.stem)
+                chunk_attempts = attempted_ref_stems_in_chunk or set()
+                chunk_attempts.add(ref_item.stem)
+                future = executor.submit(judge_pair, gen_item, ref_item)
+                active[future] = _PairAttempt(
+                    gen_item=gen_item,
+                    ref_item=ref_item,
+                    chunk_attempt_index=chunk_attempt_index,
+                    attempted_ref_stems_in_chunk=chunk_attempts,
+                )
+                return True
+
+            def start_more_gens() -> bool:
+                submitted = False
+                made_scan_progress = True
+                while len(active) < config.workers and made_scan_progress and len(results) < config.target_count:
+                    made_scan_progress = False
+                    for gen_item in gen_pass:
+                        if len(active) >= config.workers or len(results) >= config.target_count:
+                            break
+                        if not can_submit(gen_item):
+                            continue
+                        if submit_attempt(gen_item):
+                            submitted = True
+                            made_scan_progress = True
+                return submitted
+
+            start_more_gens()
+            while active and len(results) < config.target_count:
+                done, _ = wait(active, return_when=FIRST_COMPLETED)
+                for future in done:
+                    attempt = active.pop(future)
+                    gen_item = attempt.gen_item
+                    ref_item = attempt.ref_item
+                    accepted = False
+
+                    try:
+                        decision = future.result()
+                        accepted = should_accept_decision(decision, config.score_threshold)
+                    except Exception as exc:
+                        audit.append({
+                            "event": "pair_error",
+                            "batch_id": config.batch_id,
+                            "seed": config.seed,
+                            "size_key": gen_item.size_key,
+                            "gen_path": str(gen_item.image_path),
+                            "ref_path": str(ref_item.image_path),
+                            "attempt_index_for_gen": pass_attempt_count_by_gen[gen_item.stem],
+                            "error": repr(exc),
+                        })
+                    else:
+                        audit.append({
+                            "event": "pair_accepted" if accepted else "pair_rejected",
+                            "batch_id": config.batch_id,
+                            "seed": config.seed,
+                            "size_key": gen_item.size_key,
+                            "gen_path": str(gen_item.image_path),
+                            "ref_path": str(ref_item.image_path),
+                            "attempt_index_for_gen": pass_attempt_count_by_gen[gen_item.stem],
+                            "suitable": decision.get("suitable"),
+                            "score": decision.get("score"),
+                            "reason": decision.get("reason"),
+                            "source_clothes": decision.get("source_clothes", ""),
+                            "reference_clothes": decision.get("reference_clothes", ""),
+                            "prompt": decision.get("prompt", ""),
+                        })
+
+                    if accepted:
+                        ref_usage_by_size[gen_item.size_key][ref_item.stem] += 1
+                        results.append({
+                            "cond_1": str(gen_item.image_path),
+                            "cond_2": str(ref_item.image_path),
+                            "prompt": str(decision["prompt"]).strip(),
+                        })
+                        accepted_gen_stems_in_pass.add(gen_item.stem)
+                        accepted_in_pass += 1
+                        active_gen_stems.discard(gen_item.stem)
+                        processed_gen += 1
+                        attempts += len(attempt.attempted_ref_stems_in_chunk)
+                        report_progress()
+                        continue
+
+                    can_continue_chunk = (
+                        attempt.chunk_attempt_index < config.max_ref_attempts_per_gen
+                        and pass_attempt_count_by_gen[gen_item.stem] < config.max_gen_attempts_per_pass
+                        and len(pass_attempted_ref_stems_by_gen[gen_item.stem])
+                        < len(buckets[gen_item.size_key]["ref"])
+                    )
+                    if can_continue_chunk and len(results) < config.target_count:
+                        submit_attempt(
+                            gen_item=gen_item,
+                            attempted_ref_stems_in_chunk=attempt.attempted_ref_stems_in_chunk,
+                            chunk_attempt_index=attempt.chunk_attempt_index + 1,
+                        )
+                        continue
+
+                    active_gen_stems.discard(gen_item.stem)
+                    append_skip_event(gen_item, len(attempt.attempted_ref_stems_in_chunk))
+                    if pass_attempt_count_by_gen[gen_item.stem] >= config.max_gen_attempts_per_pass:
+                        append_limit_event(gen_item, pass_attempt_count_by_gen, limit_logged_gen_stems)
+                    processed_gen += 1
+                    attempts += len(attempt.attempted_ref_stems_in_chunk)
+                    report_progress()
+
+                start_more_gens()
+
+            for future in active:
+                future.cancel()
+
+            if len(results) >= config.target_count:
+                break
+            if not config.allow_gen_reuse:
+                break
+            if accepted_in_pass == 0:
+                break
+
+    return results[:config.target_count], audit
 
 
 def build_output_paths(output_dir: Path, batch_id: str) -> tuple[Path, Path]:
@@ -899,20 +1165,20 @@ def main() -> None:
         batch_id=batch_id,
         seed=seed,
         max_ref_attempts_per_gen=args.max_ref_attempts_per_gen,
-        max_gen_attempts_per_pass=args.max_gen_attempts_per_pass,
         score_threshold=args.score_threshold,
         workers=args.workers,
         allow_gen_reuse=args.allow_gen_reuse,
+        max_gen_attempts_per_pass=args.max_gen_attempts_per_pass,
     )
 
-    progress.stage("prepare-data")
+    progress.stage("准备数据")
     gen_items, gen_audit = build_valid_items(args.gen_dir, args.gen_metadata_dir, "gen")
     ref_items, ref_audit = build_valid_items(args.ref_dir, args.ref_metadata_dir, "ref")
 
-    progress.stage("build-size-buckets")
+    progress.stage("构建尺寸桶")
     buckets = build_size_buckets(gen_items, ref_items)
 
-    progress.stage("pairing")
+    progress.stage("配对判断")
     if args.dry_run_accept_all:
         judge_pair = make_mock_accept_decision
     else:
@@ -940,7 +1206,7 @@ def main() -> None:
     progress.finish_pairing_line()
     audit = gen_audit + ref_audit + pairing_audit
 
-    progress.stage("write-output")
+    progress.stage("写入输出")
     output_json_path, audit_jsonl_path = build_output_paths(args.output_dir, batch_id)
     write_outputs(output_json_path, audit_jsonl_path, results, audit)
     if args.materialized_output_dir is not None:
@@ -950,7 +1216,7 @@ def main() -> None:
             batch_id=batch_id,
         )
 
-    progress.stage("done")
+    progress.stage("任务完成")
     progress.stream.write(format_summary(
         batch_id=batch_id,
         seed=seed,
