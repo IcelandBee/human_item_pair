@@ -52,19 +52,28 @@ Hard reject these cases:
 - The person is lying down or in a constrained pose where the object would not have a physically coherent support point.
 - The edit would require major pose changes, severe occlusion, unrealistic object scale, unclear contact, or an unclear hand-object action.
 
-If suitable, generate exactly one prompt in this format:
-Let the person in image 1 [hand-object action phrase] [object description] shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged.
+If suitable, describe only the main object in image 2. The final prompt must always use this fixed format:
+Let the person in image 1 hold [object description] shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged.
 
 Return strict JSON only:
 {
   "suitable": true or false,
   "score": a number from 0 to 1,
   "reason": "short reason",
-  "action": "short hand-object action phrase, or empty string if unsuitable",
+  "action": "hold, or empty string if unsuitable",
   "object_description": "main object description, or empty string if unsuitable",
   "prompt": "final prompt, or empty string if unsuitable"
 }
 """.strip()
+
+
+PROMPT_PREFIX = "Let the person in image 1 hold "
+PROMPT_SUFFIX = (
+    " shown in image 2 in a realistic and physically coherent way, "
+    "preserving object integrity and overall image consistency, while making "
+    "only the minimal necessary changes and keeping everything else in image 1 "
+    "unchanged."
+)
 
 
 @dataclass(frozen=True)
@@ -335,6 +344,26 @@ def should_accept_decision(
     if "keeping everything else in image 1 unchanged" not in prompt:
         return False
     return True
+
+
+def build_hold_prompt(object_description: Any) -> str:
+    description = str(object_description or "").strip().rstrip(".")
+    if not description:
+        description = "a holdable object"
+    return f"{PROMPT_PREFIX}{description}{PROMPT_SUFFIX}"
+
+
+def normalized_hold_prompt_from_decision(decision: dict[str, Any]) -> str:
+    object_description = decision.get("object_description")
+    if isinstance(object_description, str) and object_description.strip():
+        return build_hold_prompt(object_description)
+
+    prompt = str(decision.get("prompt", "")).strip()
+    if prompt.startswith(PROMPT_PREFIX) and " shown in image 2 " in prompt:
+        object_description = prompt[len(PROMPT_PREFIX):prompt.index(" shown in image 2 ")]
+        return build_hold_prompt(object_description)
+
+    return build_hold_prompt("")
 
 
 def compact_gen_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -647,7 +676,7 @@ def run_pairing(
                         results.append({
                             "cond_1": str(gen_item.image_path),
                             "cond_2": str(ref_item.image_path),
-                            "prompt": str(decision["prompt"]).strip(),
+                            "prompt": normalized_hold_prompt_from_decision(decision),
                         })
                         accepted_for_gen = True
                         accepted_gen_stems_in_pass.add(gen_item.stem)

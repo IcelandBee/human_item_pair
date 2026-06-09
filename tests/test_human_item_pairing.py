@@ -10,6 +10,7 @@ from human_item_pairing import (
     PairingConfig,
     build_output_paths,
     build_size_buckets,
+    build_hold_prompt,
     build_valid_items,
     choose_balanced_ref,
     compact_gen_metadata,
@@ -370,6 +371,49 @@ def test_run_pairing_balances_refs_and_stops_at_target_count():
     for result in results:
         ref_counts[result["cond_2"]] = ref_counts.get(result["cond_2"], 0) + 1
     assert sorted(ref_counts.values()) == [1, 2]
+
+
+def test_run_pairing_normalizes_accepted_prompt_to_hold_only():
+    gen_items = [make_item("g1")]
+    ref_items = [make_item("r1")]
+    buckets = build_size_buckets(gen_items, ref_items)
+    config = PairingConfig(
+        target_count=1,
+        batch_id="unit",
+        seed=123,
+        max_ref_attempts_per_gen=1,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=False,
+    )
+
+    def fake_judge(_gen_item, _ref_item):
+        return {
+            "suitable": True,
+            "score": 0.9,
+            "reason": "mock accepted",
+            "action": "hold and gently pet",
+            "object_description": "the small bearded dragon lizard",
+            "prompt": (
+                "Let the person in image 1 hold and gently pet the small bearded "
+                "dragon lizard shown in image 2 in a realistic and physically "
+                "coherent way, preserving object integrity and overall image "
+                "consistency, while making only the minimal necessary changes and "
+                "keeping everything else in image 1 unchanged."
+            ),
+        }
+
+    results, _audit = run_pairing(
+        buckets=buckets,
+        config=config,
+        judge_pair=fake_judge,
+    )
+
+    assert results == [{
+        "cond_1": "g1.jpg",
+        "cond_2": "r1.jpg",
+        "prompt": build_hold_prompt("the small bearded dragon lizard"),
+    }]
 
 
 def test_run_pairing_limits_bad_gen_attempts_per_pass_and_resets_next_pass(monkeypatch):
