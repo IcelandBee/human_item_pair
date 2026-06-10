@@ -7,6 +7,7 @@ from PIL import Image
 from human_item_pairing_concurrent import (
     ImageItem,
     PairingConfig,
+    build_interaction_prompt,
     build_size_buckets,
     materialize_pair_outputs,
     run_pairing,
@@ -86,6 +87,54 @@ def test_concurrent_script_is_standalone():
 
     assert "from human_item_pairing import" not in source
     assert "run_pairing_serial" not in source
+
+
+def test_run_pairing_builds_prompt_from_action_and_object_description():
+    gen_items = [make_item("g1")]
+    ref_items = [make_item("r1")]
+    buckets = build_size_buckets(gen_items, ref_items)
+    config = PairingConfig(
+        target_count=1,
+        batch_id="unit",
+        seed=123,
+        max_ref_attempts_per_gen=1,
+        score_threshold=0.75,
+        workers=1,
+        allow_gen_reuse=False,
+    )
+
+    def fake_judge(_gen_item, _ref_item):
+        return {
+            "suitable": True,
+            "score": 0.9,
+            "reason": "mock accepted",
+            "action": "carry over the shoulder",
+            "object_description": "a red leather handbag",
+            "prompt": "This prompt should not be copied directly.",
+        }
+
+    results, _audit = run_pairing(buckets, config, fake_judge)
+
+    assert results == [{
+        "cond_1": "g1.jpg",
+        "cond_2": "r1.jpg",
+        "prompt": build_interaction_prompt(
+            "carry over the shoulder",
+            "a red leather handbag",
+        ),
+    }]
+
+
+def test_build_interaction_prompt_places_object_inside_action_when_needed():
+    assert build_interaction_prompt(
+        "hold by the handle",
+        "a white ceramic mug",
+    ).startswith("Let the person in image 1 hold a white ceramic mug by the handle shown in image 2 ")
+
+    assert build_interaction_prompt(
+        "carry over the shoulder",
+        "a red leather handbag",
+    ).startswith("Let the person in image 1 carry a red leather handbag over the shoulder shown in image 2 ")
 
 
 def test_materialize_pair_outputs_is_available_in_standalone_concurrent_script(tmp_path):

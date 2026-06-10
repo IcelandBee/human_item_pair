@@ -53,22 +53,27 @@ Hard reject these cases:
 - The person is lying down or in a constrained pose where the object would not have a physically coherent support point.
 - The edit would require major pose changes, severe occlusion, unrealistic object scale, unclear contact, or an unclear hand-object action.
 
-If suitable, describe only the main object in image 2. The final prompt must always use this fixed format:
-Let the person in image 1 hold [object description] shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged.
+If suitable, generate prompt fields in a separate prompt-generation step:
+- For the prompt fields only, examine image 2 to identify the main object and choose the most natural hand-related action for that object.
+- Do not describe the person, pose, clothing, background, or scene in image 1 in the prompt fields. Image 1 must only be referred to as "the person in image 1".
+- The object_description must be clear and unambiguous, using about 3-8 words, such as "a fresh green broccoli", "a red leather handbag", "a white ceramic mug", or "a bouquet of red roses".
+- The action must be a natural hand-related action phrase based on the object type, such as "hold", "carry", "grip", "hold by the handle", "hold in both hands", or "carry over the shoulder".
+- The final prompt must follow this fixed format:
+Let the person in image 1 [action] [object_description] shown in image 2 in a realistic and physically coherent way, preserving object integrity and overall image consistency, while making only the minimal necessary changes and keeping everything else in image 1 unchanged.
 
 Return strict JSON only:
 {
   "suitable": true or false,
   "score": a number from 0 to 1,
   "reason": "short reason",
-  "action": "hold, or empty string if unsuitable",
+  "action": "natural hand-related action phrase, or empty string if unsuitable",
   "object_description": "main object description, or empty string if unsuitable",
   "prompt": "final prompt, or empty string if unsuitable"
 }
 """.strip()
 
 
-PROMPT_PREFIX = "Let the person in image 1 hold "
+PROMPT_PREFIX = "Let the person in image 1 "
 PROMPT_SUFFIX = (
     " shown in image 2 in a realistic and physically coherent way, "
     "preserving object integrity and overall image consistency, while making "
@@ -334,37 +339,36 @@ def should_accept_decision(
         return False
     if float(score) < score_threshold:
         return False
-    prompt = decision.get("prompt")
-    if not isinstance(prompt, str) or not prompt.strip():
+    action = decision.get("action")
+    if not isinstance(action, str) or not action.strip():
         return False
-    prompt = prompt.strip()
-    if not prompt.startswith("Let the person in image 1 "):
-        return False
-    if " shown in image 2 " not in prompt:
-        return False
-    if "keeping everything else in image 1 unchanged" not in prompt:
+    object_description = decision.get("object_description")
+    if not isinstance(object_description, str) or not object_description.strip():
         return False
     return True
 
 
-def build_hold_prompt(object_description: Any) -> str:
+def build_interaction_prompt(action: Any, object_description: Any) -> str:
+    action_phrase = str(action or "").strip()
     description = str(object_description or "").strip().rstrip(".")
+    if not action_phrase:
+        action_phrase = "hold"
     if not description:
         description = "a holdable object"
-    return f"{PROMPT_PREFIX}{description}{PROMPT_SUFFIX}"
+    if action_phrase == "hold by the handle":
+        return f"{PROMPT_PREFIX}hold {description} by the handle{PROMPT_SUFFIX}"
+    if action_phrase == "hold in both hands":
+        return f"{PROMPT_PREFIX}hold {description} in both hands{PROMPT_SUFFIX}"
+    if action_phrase == "carry over the shoulder":
+        return f"{PROMPT_PREFIX}carry {description} over the shoulder{PROMPT_SUFFIX}"
+    return f"{PROMPT_PREFIX}{action_phrase} {description}{PROMPT_SUFFIX}"
 
 
-def normalized_hold_prompt_from_decision(decision: dict[str, Any]) -> str:
-    object_description = decision.get("object_description")
-    if isinstance(object_description, str) and object_description.strip():
-        return build_hold_prompt(object_description)
-
-    prompt = str(decision.get("prompt", "")).strip()
-    if prompt.startswith(PROMPT_PREFIX) and " shown in image 2 " in prompt:
-        object_description = prompt[len(PROMPT_PREFIX):prompt.index(" shown in image 2 ")]
-        return build_hold_prompt(object_description)
-
-    return build_hold_prompt("")
+def normalized_interaction_prompt_from_decision(decision: dict[str, Any]) -> str:
+    return build_interaction_prompt(
+        decision.get("action"),
+        decision.get("object_description"),
+    )
 
 
 def compact_gen_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
@@ -685,7 +689,7 @@ def _run_pairing_single_worker(
                         results.append({
                             "cond_1": str(gen_item.image_path),
                             "cond_2": str(ref_item.image_path),
-                            "prompt": normalized_hold_prompt_from_decision(decision),
+                            "prompt": normalized_interaction_prompt_from_decision(decision),
                         })
                         accepted_for_gen = True
                         accepted_gen_stems_in_pass.add(gen_item.stem)
@@ -936,7 +940,7 @@ def run_pairing(
                         results.append({
                             "cond_1": str(gen_item.image_path),
                             "cond_2": str(ref_item.image_path),
-                            "prompt": normalized_hold_prompt_from_decision(decision),
+                            "prompt": normalized_interaction_prompt_from_decision(decision),
                         })
                         accepted_gen_stems_in_pass.add(gen_item.stem)
                         accepted_in_pass += 1
